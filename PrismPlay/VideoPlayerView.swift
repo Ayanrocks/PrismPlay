@@ -32,7 +32,11 @@ struct VideoPlayerView: View {
                         // Top Bar
                         HStack {
                             Button(action: {
-                                presentationMode.wrappedValue.dismiss()
+                                viewModel.resetOrientation()
+                                // Delay dismissal slightly to allow rotation to begin
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    presentationMode.wrappedValue.dismiss()
+                                }
                             }) {
                                 Image(systemName: "xmark")
                                     .foregroundColor(.white)
@@ -127,6 +131,7 @@ struct VideoPlayerView: View {
         }
         .onDisappear {
             viewModel.cleanup()
+            viewModel.resetOrientation()
         }
     }
     
@@ -250,7 +255,7 @@ class PlayerViewModel: ObservableObject {
         if #available(iOS 16.0, *) {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
             
-            if windowScene.interfaceOrientation.isLandscape {
+            if windowScene.effectiveGeometry.interfaceOrientation.isLandscape {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
             } else {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
@@ -259,6 +264,16 @@ class PlayerViewModel: ObservableObject {
             let currentOrientation = UIDevice.current.orientation
             let value = currentOrientation.isLandscape ? UIInterfaceOrientation.portrait.rawValue : UIInterfaceOrientation.landscapeRight.rawValue
             UIDevice.current.setValue(value, forKey: "orientation")
+        }
+    }
+
+
+    func resetOrientation() {
+        if #available(iOS 16.0, *) {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        } else {
+            UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
         }
     }
 }
