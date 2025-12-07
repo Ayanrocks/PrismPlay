@@ -2,11 +2,23 @@ import SwiftUI
 import AVKit
 import Combine
 import UIKit
+import MediaPlayer
 
 struct VideoPlayerView: View {
     let url: URL
     @StateObject private var viewModel = PlayerViewModel()
     @Environment(\.presentationMode) var presentationMode
+    
+    // Gesture States
+    @State private var dragStartBrightness: CGFloat = 0
+    @State private var dragStartVolume: Float = 0
+    @State private var isDraggingBrightness = false
+    @State private var isDraggingVolume = false
+    @State private var feedbackText: String = ""
+    @State private var showFeedback: Bool = false
+    
+    // Volume Control
+    @State private var targetVolume: Float = AVAudioSession.sharedInstance().outputVolume
     
     var body: some View {
         ZStack {
@@ -16,17 +28,85 @@ struct VideoPlayerView: View {
                 VideoPlayerController(player: player)
                     .edgesIgnoringSafeArea(.all)
                     .overlay(
-                        // Tap gesture interceptor
-                        Color.black.opacity(0.001) 
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .onTapGesture {
-                                withAnimation {
-                                    viewModel.showControls.toggle()
-                                }
-                                viewModel.resetControlTimer()
+                        GeometryReader { geometry in
+                            HStack(spacing: 0) {
+                                // Left Side: Brightness
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .frame(width: geometry.size.width / 3)
+                                    .gesture(
+                                        DragGesture(minimumDistance: 10, coordinateSpace: .local)
+                                            .onChanged { value in
+                                                if !isDraggingBrightness {
+                                                    isDraggingBrightness = true
+                                                    dragStartBrightness = ScreenUtils.brightness
+                                                }
+                                                
+                                                let delta = -value.translation.height / geometry.size.height
+                                                let newBrightness = min(max(dragStartBrightness + delta, 0.0), 1.0)
+                                                
+                                                ScreenUtils.brightness = newBrightness
+                                                showFeedback(text: "Brightness: \(Int(newBrightness * 100))%")
+                                            }
+                                            .onEnded { _ in
+                                                isDraggingBrightness = false
+                                                dragStartBrightness = 0
+                                                hideFeedback()
+                                            }
+                                    )
+                                    .onTapGesture {
+                                        toggleControls()
+                                    }
+                                
+                                // Center: Tap Only
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        toggleControls()
+                                    }
+                                
+                                // Right Side: Volume
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .frame(width: geometry.size.width / 3)
+                                    .gesture(
+                                        DragGesture(minimumDistance: 10, coordinateSpace: .local)
+                                            .onChanged { value in
+                                                if !isDraggingVolume {
+                                                    isDraggingVolume = true
+                                                    dragStartVolume = AVAudioSession.sharedInstance().outputVolume
+                                                }
+                                                
+                                                let delta = Float(-value.translation.height / geometry.size.height)
+                                                let newVolume = min(max(dragStartVolume + delta, 0.0), 1.0)
+                                                
+                                                targetVolume = newVolume
+                                                showFeedback(text: "Volume: \(Int(newVolume * 100))%")
+                                            }
+                                            .onEnded { _ in
+                                                isDraggingVolume = false
+                                                dragStartVolume = 0
+                                                hideFeedback()
+                                            }
+                                    )
+                                    .onTapGesture {
+                                        toggleControls()
+                                    }
                             }
+                        }
                     )
                 
+                // Feedback Overlay
+                if showFeedback {
+                    Text(feedbackText)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.black.opacity(0.6))
+                        .cornerRadius(10)
+                        .transition(.opacity)
+                }
+
                 if viewModel.showControls {
                     VStack {
                         // Top Bar
@@ -38,7 +118,7 @@ struct VideoPlayerView: View {
                                     presentationMode.wrappedValue.dismiss()
                                 }
                             }) {
-                                Image(systemName: "xmark")
+                                PrismIcon.close.image
                                     .foregroundColor(.white)
                                     .font(.title2)
                                     .padding()
@@ -50,7 +130,7 @@ struct VideoPlayerView: View {
                             Button(action: {
                                 viewModel.toggleOrientation()
                             }) {
-                                Image(systemName: "arrow.triangle.2.circlepath.camera.fill") // Or "rectangle.landscape.rotate" or similar
+                                PrismIcon.rotateScreen.image
                                     .foregroundColor(.white)
                                     .font(.title2)
                                     .padding()
@@ -59,6 +139,7 @@ struct VideoPlayerView: View {
                             }
                         }
                         .padding(.top, 40)
+                        .padding(.horizontal)
                         
                         Spacer()
                         
@@ -67,7 +148,7 @@ struct VideoPlayerView: View {
                             Button(action: {
                                 viewModel.seekRelative(by: -5)
                             }) {
-                                Image(systemName: "gobackward.5")
+                                PrismIcon.seekBackward.image
                                     .font(.system(size: 30))
                                     .foregroundColor(.white)
                                     .shadow(radius: 5)
@@ -76,7 +157,7 @@ struct VideoPlayerView: View {
                             Button(action: {
                                 viewModel.togglePlayPause()
                             }) {
-                                Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                (viewModel.isPlaying ? PrismIcon.pause.image : PrismIcon.play.image)
                                     .font(.system(size: 70))
                                     .foregroundColor(.white)
                                     .shadow(radius: 5)
@@ -85,7 +166,7 @@ struct VideoPlayerView: View {
                             Button(action: {
                                 viewModel.seekRelative(by: 5)
                             }) {
-                                Image(systemName: "goforward.5")
+                                PrismIcon.seekForward.image
                                     .font(.system(size: 30))
                                     .foregroundColor(.white)
                                     .shadow(radius: 5)
@@ -121,6 +202,11 @@ struct VideoPlayerView: View {
                     }
                     .transition(.opacity)
                 }
+                
+                // Hidden Volume View to enable programmatic control via binding
+                VolumeView(volume: $targetVolume)
+                    .frame(width: 0, height: 0)
+                    .opacity(0.001)
             } else {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
@@ -135,10 +221,71 @@ struct VideoPlayerView: View {
         }
     }
     
+    private func toggleControls() {
+        withAnimation {
+            viewModel.showControls.toggle()
+        }
+        viewModel.resetControlTimer()
+    }
+
+    private func showFeedback(text: String) {
+        feedbackText = text
+        withAnimation {
+            showFeedback = true
+        }
+    }
+    
+    private func hideFeedback() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            withAnimation {
+                showFeedback = false
+            }
+        }
+    }
+    
     func formatTime(_ time: Double) -> String {
         let seconds = Int(time) % 60
         let minutes = Int(time) / 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+}
+
+// Helper for screen brightness allowing for future iOS versions
+struct ScreenUtils {
+    static var brightness: CGFloat {
+        get {
+            // Find the active window scene safely
+            let scene = UIApplication.shared.connectedScenes
+                .filter { $0.activationState == .foregroundActive }
+                .compactMap { $0 as? UIWindowScene }
+                .first
+            return scene?.screen.brightness ?? 0.5 // Default if not found
+        }
+        set {
+            let scene = UIApplication.shared.connectedScenes
+                .filter { $0.activationState == .foregroundActive }
+                .compactMap { $0 as? UIWindowScene }
+                .first
+            scene?.screen.brightness = newValue
+        }
+    }
+}
+
+struct VolumeView: UIViewRepresentable {
+    @Binding var volume: Float
+
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView(frame: .zero)
+        view.alpha = 0.001
+        return view
+    }
+    
+    func updateUIView(_ uiView: MPVolumeView, context: Context) {
+        DispatchQueue.main.async {
+            if let slider = uiView.subviews.first(where: { $0 is UISlider }) as? UISlider {
+                slider.setValue(volume, animated: false)
+            }
+        }
     }
 }
 
@@ -181,9 +328,10 @@ class PlayerViewModel: ObservableObject {
         
         Task {
             do {
-                let duration = try await playerItem.asset.load(.duration)
-                DispatchQueue.main.async {
-                    self.duration = CMTimeGetSeconds(duration)
+                if let duration = try await playerItem.asset.load(.duration) as CMTime? {
+                     DispatchQueue.main.async {
+                         self.duration = CMTimeGetSeconds(duration)
+                     }
                 }
             } catch {
                 print("Failed to load duration: \(error)")
