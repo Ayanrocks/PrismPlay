@@ -37,6 +37,7 @@ struct LibraryRowView: View {
                                 .frame(width: 120, height: 180)
                                 .cornerRadius(10)
                                 .clipped()
+                                .playbackProgressOverlay(for: item)
                                 
                                 Text(item.Name)
                                     .font(.caption)

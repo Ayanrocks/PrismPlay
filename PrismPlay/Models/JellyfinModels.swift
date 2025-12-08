@@ -96,6 +96,20 @@ struct MediaSourceInfo: Codable, Identifiable, Sendable {
     }
 }
 
+struct JellyfinUserData: Codable, Sendable {
+    let PlaybackPositionTicks: Int64?
+    let PlayedPercentage: Double?
+    let Played: Bool?
+    let IsFavorite: Bool?
+    let LastPlayedDate: String?
+    
+    /// Returns playback position in seconds
+    var playbackPositionSeconds: Double {
+        guard let ticks = PlaybackPositionTicks else { return 0 }
+        return Double(ticks) / 10_000_000.0
+    }
+}
+
 struct JellyfinItem: Codable, Identifiable, Sendable {
     let Name: String
     let Id: String
@@ -103,7 +117,7 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
     let ImageTags: [String: String]?
     let BackdropImageTags: [String]?
     let Overview: String?
-    let RunTimeTicks: Int?
+    let RunTimeTicks: Int64?
     let Genres: [String]?
     let ProductionYear: Int?
     let CommunityRating: Double?
@@ -112,6 +126,9 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
     let MediaSources: [MediaSourceInfo]?
     let IndexNumber: Int?
     let ParentIndexNumber: Int?
+    let UserData: JellyfinUserData?
+    let SeriesName: String?
+    let SeriesId: String?
     
     var id: String { Id }
     
@@ -131,6 +148,9 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
         case MediaSources
         case IndexNumber
         case ParentIndexNumber
+        case UserData
+        case SeriesName
+        case SeriesId
     }
     
     // Helper to get primary image tag
@@ -141,6 +161,47 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
     // Helper to get backdrop image tag (first one)
     var backdropImageTag: String? {
         return BackdropImageTags?.first
+    }
+    
+    /// Returns total runtime in seconds
+    var runtimeSeconds: Double {
+        guard let ticks = RunTimeTicks else { return 0 }
+        return Double(ticks) / 10_000_000.0
+    }
+    
+    /// Returns remaining time in seconds based on playback progress
+    var remainingSeconds: Double {
+        let total = runtimeSeconds
+        let played = UserData?.playbackPositionSeconds ?? 0
+        return max(0, total - played)
+    }
+    
+    /// Returns remaining time as formatted string (e.g., "15 min left")
+    var remainingTimeString: String? {
+        guard let userData = UserData,
+              let percentage = userData.PlayedPercentage,
+              percentage > 0 && percentage < 95 else { return nil }
+        
+        let remaining = remainingSeconds
+        let minutes = Int(remaining / 60)
+        if minutes > 60 {
+            let hours = minutes / 60
+            let mins = minutes % 60
+            return "\(hours)h \(mins)m left"
+        }
+        return "\(minutes) min left"
+    }
+    
+    /// Returns played percentage (0-1 scale for progress bars)
+    var playedProgress: Double {
+        guard let percentage = UserData?.PlayedPercentage else { return 0 }
+        return min(percentage / 100.0, 1.0)
+    }
+    
+    /// Whether this item has been partially watched
+    var isPartiallyWatched: Bool {
+        guard let percentage = UserData?.PlayedPercentage else { return false }
+        return percentage > 0 && percentage < 95
     }
 }
 

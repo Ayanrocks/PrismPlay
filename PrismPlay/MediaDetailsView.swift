@@ -8,6 +8,7 @@ struct MediaDetailsView: View {
     @State private var episodes: [JellyfinItem] = []
     @State private var selectedSeasonId: String?
     @State private var isLoadingDetails = true
+    @State private var playingItem: JellyfinItem?
     @Environment(\.presentationMode) var presentationMode
     
     // Computed props
@@ -142,21 +143,20 @@ struct MediaDetailsView: View {
                                         ForEach(episodes) { episode in
                                             HStack {
                                                 Button(action: {
-                                                    // Play episode
+                                                    playingItem = episode
                                                 }) {
-                                                    AsyncImage(url: jellyfinService.imageURL(for: episode.Id, imageTag: episode.primaryImageTag)) { image in
-                                                        image.resizable().aspectRatio(contentMode: .fill)
-                                                    } placeholder: {
-                                                        Rectangle().fill(Color.gray.opacity(0.3))
+                                                    ZStack {
+                                                        AsyncImage(url: jellyfinService.imageURL(for: episode.Id, imageTag: episode.primaryImageTag)) { image in
+                                                            image.resizable().aspectRatio(contentMode: .fill)
+                                                        } placeholder: {
+                                                            Rectangle().fill(Color.gray.opacity(0.3))
+                                                        }
+                                                        .frame(width: 80, height: 45)
+                                                        .cornerRadius(4)
+                                                        .playbackProgressOverlay(for: episode, showRemainingTime: false)
+                                                        
+                                                        PlayButtonOverlay(item: episode, size: 28)
                                                     }
-                                                    .frame(width: 80, height: 45)
-                                                    .cornerRadius(4)
-                                                    .overlay(
-                                                        Image(systemName: "play.circle.fill")
-                                                            .font(.system(size: 24))
-                                                            .foregroundColor(.white.opacity(0.9))
-                                                            .shadow(radius: 2)
-                                                    )
                                                 }
                                                 
                                                 VStack(alignment: .leading, spacing: 4) {
@@ -206,12 +206,17 @@ struct MediaDetailsView: View {
                                 
                                 // Action Buttons (Play)
                                 Button(action: {
-                                    // Play action
+                                    playingItem = detailedItem ?? item
                                 }) {
                                     HStack {
                                         Image(systemName: "play.fill")
-                                        Text("Play")
-                                            .fontWeight(.bold)
+                                        if let remaining = (detailedItem ?? item).remainingTimeString {
+                                            Text("Resume • \(remaining)")
+                                                .fontWeight(.bold)
+                                        } else {
+                                            Text("Play")
+                                                .fontWeight(.bold)
+                                        }
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding()
@@ -409,6 +414,9 @@ struct MediaDetailsView: View {
             }
             .navigationBarHidden(false)
             .edgesIgnoringSafeArea(.top)
+            .fullScreenCover(item: $playingItem) { item in
+                JellyfinPlayerView(item: item)
+            }
         }
         .onAppear {
             loadDetails()

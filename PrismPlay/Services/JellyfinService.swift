@@ -131,7 +131,7 @@ class JellyfinService: ObservableObject {
         // Let's try getting recent items or just root library items first. 
         // A better query for "movies and shows" might be /Users/{UserId}/Items?Recursive=true&IncludeItemTypes=Movie,Series
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -173,7 +173,7 @@ class JellyfinService: ObservableObject {
         }
         
         // Fetch details including People, Overview, Genres, etc.
-        let urlString = "\(serverURL)/Users/\(userId)/Items/\(itemId)?Fields=People,Overview,Genres,RunTimeTicks,ProductionYear,CommunityRating,OfficialRating,PrimaryImageAspectRatio,DateCreated,MediaSources,BackdropImageTags"
+        let urlString = "\(serverURL)/Users/\(userId)/Items/\(itemId)?Fields=People,Overview,Genres,RunTimeTicks,ProductionYear,CommunityRating,OfficialRating,PrimaryImageAspectRatio,DateCreated,MediaSources,BackdropImageTags,UserData"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -269,7 +269,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated&SortBy=DateCreated&SortOrder=Descending"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks&SortBy=DateCreated&SortOrder=Descending"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -316,7 +316,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -441,6 +441,158 @@ class JellyfinService: ObservableObject {
                     print("Error decoding items: \(error)")
                     completion(nil)
                 }
+            }
+        }.resume()
+    }
+    
+    // MARK: - Streaming URL
+    
+    /// Constructs a streaming URL using HLS transcoding for universal iOS compatibility
+    /// Server handles transcoding to H.264/AAC which AVPlayer can handle
+    func getStreamURL(itemId: String) -> URL? {
+        guard !serverURL.isEmpty, !accessToken.isEmpty, !userId.isEmpty else { return nil }
+        
+        // HLS master playlist - Jellyfin transcodes to iOS-compatible format
+        let urlString = "\(serverURL)/Videos/\(itemId)/master.m3u8?UserId=\(userId)&api_key=\(accessToken)&MediaSourceId=\(itemId)&VideoCodec=h264&AudioCodec=aac&MaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=true"
+        return URL(string: urlString)
+    }
+    
+    /// Constructs a direct stream URL (only for iOS-native formats like MP4/H.264)
+    func getDirectStreamURL(itemId: String) -> URL? {
+        guard !serverURL.isEmpty, !accessToken.isEmpty else { return nil }
+        
+        let urlString = "\(serverURL)/Videos/\(itemId)/stream?static=true&api_key=\(accessToken)"
+        return URL(string: urlString)
+    }
+    
+    // MARK: - Resume / Continue Watching
+    
+    /// Fetches items that the user has partially watched (Continue Watching)
+    func fetchResumeItems(limit: Int = 12, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        let urlString = "\(serverURL)/Users/\(userId)/Items/Resume?Limit=\(limit)&Fields=PrimaryImageAspectRatio,Overview,MediaSources,RunTimeTicks,UserData,SeriesName,SeriesId&EnableImageTypes=Primary,Backdrop,Thumb"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, completion: completion)
+    }
+    
+    // MARK: - Playback Reporting
+    
+    private var deviceId: String {
+        // Use a consistent device ID for session tracking
+        if let storedId = UserDefaults.standard.string(forKey: "jellyfin_device_id") {
+            return storedId
+        }
+        let newId = UUID().uuidString
+        UserDefaults.standard.set(newId, forKey: "jellyfin_device_id")
+        return newId
+    }
+    
+    private var authHeader: String {
+        "MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(deviceId)\", Version=\"1.0.0\", Token=\"\(accessToken)\""
+    }
+    
+    /// Reports that playback has started for an item
+    func reportPlaybackStart(itemId: String, positionTicks: Int64 = 0) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else { return }
+        
+        let urlString = "\(serverURL)/Sessions/Playing"
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        
+        let body: [String: Any] = [
+            "ItemId": itemId,
+            "PositionTicks": positionTicks,
+            "PlayMethod": "DirectStream",
+            "CanSeek": true
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            print("Error encoding playback start: \(error)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                print("Error reporting playback start: \(error)")
+            }
+        }.resume()
+    }
+    
+    /// Reports current playback progress
+    func reportPlaybackProgress(itemId: String, positionTicks: Int64, isPaused: Bool = false) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else { return }
+        
+        let urlString = "\(serverURL)/Sessions/Playing/Progress"
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        
+        let body: [String: Any] = [
+            "ItemId": itemId,
+            "PositionTicks": positionTicks,
+            "IsPaused": isPaused,
+            "PlayMethod": "DirectStream",
+            "CanSeek": true
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            print("Error encoding playback progress: \(error)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { _, _, error in
+            if let error = error {
+                print("Error reporting playback progress: \(error)")
+            }
+        }.resume()
+    }
+    
+    /// Reports that playback has stopped
+    func reportPlaybackStopped(itemId: String, positionTicks: Int64) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else { return }
+        
+        let urlString = "\(serverURL)/Sessions/Playing/Stopped"
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue(authHeader, forHTTPHeaderField: "X-Emby-Authorization")
+        
+        let body: [String: Any] = [
+            "ItemId": itemId,
+            "PositionTicks": positionTicks
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            print("Error encoding playback stopped: \(error)")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { _, _, error in
+            if let error = error {
+                print("Error reporting playback stopped: \(error)")
             }
         }.resume()
     }

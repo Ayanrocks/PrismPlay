@@ -11,7 +11,9 @@ struct HomeView: View {
     @ObservedObject private var jellyfinService = JellyfinService.shared
     @State private var showJellyfinLogin = false
     @State private var librariesWithItems: [LibraryWithItems] = []
+    @State private var resumeItems: [JellyfinItem] = []
     @State private var isLoading = false
+    @State private var playingItem: JellyfinItem?
     
     var body: some View {
         NavigationView {
@@ -89,6 +91,12 @@ struct HomeView: View {
                                     .foregroundColor(.white.opacity(0.7))
                                     .padding()
                             } else {
+                                // Continue Watching Section (if any)
+                                if !resumeItems.isEmpty {
+                                    ContinueWatchingRowView(items: resumeItems, jellyfinService: jellyfinService, selectedItem: $playingItem)
+                                }
+                                
+                                // Library Rows
                                 ForEach(librariesWithItems) { libraryWithItems in
                                     LibraryRowView(
                                         library: libraryWithItems.library,
@@ -103,6 +111,9 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showJellyfinLogin) {
                 JellyfinLoginView(isPresented: $showJellyfinLogin)
+            }
+            .fullScreenCover(item: $playingItem) { item in
+                JellyfinPlayerView(item: item)
             }
             .onAppear {
                 loadLibraries()
@@ -120,6 +131,14 @@ struct HomeView: View {
         
         isLoading = true
         librariesWithItems = []
+        resumeItems = []
+        
+        // Fetch resume items first
+        jellyfinService.fetchResumeItems { items in
+            Task { @MainActor in
+                self.resumeItems = items ?? []
+            }
+        }
         
         Task {
             // First fetch libraries
