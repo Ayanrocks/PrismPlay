@@ -43,12 +43,14 @@ struct JellyfinItemsResponse: Codable, Sendable {
     let Items: [JellyfinItem]
 }
 
-struct MediaStream: Codable, Sendable {
+struct MediaStream: Codable, Sendable, Identifiable {
+    let Index: Int
     let Codec: String?
     let Language: String?
     let TimeBase: String?
     let VideoRange: String?
     let DisplayTitle: String?
+    let Title: String?
     let NativesTags: [String]?
     let Widescreen: Bool?
     let BitRate: Int?
@@ -62,9 +64,30 @@ struct MediaStream: Codable, Sendable {
     let Level: Double?
     let Profile: String?
     let StreamType: String
+    let IsExternal: Bool?
+    let IsDefault: Bool?
+    let IsForced: Bool?
+    let SupportsExternalStream: Bool?
+    let Path: String?
+    
+    var id: Int { Index }
+    
+    /// Display name for subtitle selection
+    var subtitleDisplayName: String {
+        if let title = Title, !title.isEmpty {
+            return title
+        }
+        if let displayTitle = DisplayTitle, !displayTitle.isEmpty {
+            return displayTitle
+        }
+        if let language = Language {
+            return language.uppercased()
+        }
+        return "Subtitle \(Index)"
+    }
     
     enum CodingKeys: String, CodingKey {
-        case Codec, Language, TimeBase, VideoRange, DisplayTitle, NativesTags, Widescreen, BitRate, AspectRatio, AudioChannels, AudioSampleRate, Height, Width, AverageFrameRate, RealFrameRate, Level, Profile
+        case Index, Codec, Language, TimeBase, VideoRange, DisplayTitle, Title, NativesTags, Widescreen, BitRate, AspectRatio, AudioChannels, AudioSampleRate, Height, Width, AverageFrameRate, RealFrameRate, Level, Profile, IsExternal, IsDefault, IsForced, SupportsExternalStream, Path
         case StreamType = "Type"
     }
 }

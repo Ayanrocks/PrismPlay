@@ -8,6 +8,7 @@ struct JellyfinPlayerView: View {
     let item: JellyfinItem
     @StateObject private var viewModel = JellyfinPlayerViewModel()
     @ObservedObject private var jellyfinService = JellyfinService.shared
+    @ObservedObject private var settings = PlayerSettings.shared
     @Environment(\.dismiss) var dismiss
     
     // Gesture States
@@ -18,17 +19,43 @@ struct JellyfinPlayerView: View {
     @State private var feedbackText: String = ""
     @State private var showFeedback: Bool = false
     
+    // Slide-to-seek states
+    @State private var isDraggingSeek = false
+    @State private var seekDragStartTime: Double = 0
+    @State private var seekDragOffset: Double = 0
+    @State private var showSeekPreview: Bool = false
+    
+    // Double-tap feedback
+    @State private var showDoubleTapFeedback: Bool = false
+    @State private var doubleTapIsForward: Bool = true
+    
+    // Subtitle selection
+    @State private var showSubtitlePicker: Bool = false
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.black.edgesIgnoringSafeArea(.all)
                 
                 if let player = viewModel.player {
-                    VideoPlayerController(player: player)
-                        .edgesIgnoringSafeArea(.all)
-                        .overlay(gestureOverlay(geometry: geometry))
+                    VideoPlayerController(
+                        player: player,
+                        aspectRatio: settings.currentAspectRatio
+                    )
+                    .edgesIgnoringSafeArea(.all)
+                    .overlay(gestureOverlay(geometry: geometry))
                     
-                    // Feedback Overlay
+                    // Seek Preview Overlay
+                    if showSeekPreview {
+                        seekPreviewOverlay()
+                    }
+                    
+                    // Double-tap Feedback
+                    if showDoubleTapFeedback {
+                        doubleTapFeedbackOverlay()
+                    }
+                    
+                    // Feedback Overlay (brightness/volume)
                     if showFeedback {
                         Text(feedbackText)
                             .font(.headline)
@@ -41,6 +68,30 @@ struct JellyfinPlayerView: View {
                     
                     if viewModel.showControls {
                         controlsOverlay(geometry: geometry)
+                    }
+                    
+                    // Subtitle loading indicator in corner
+                    if viewModel.isLoadingSubtitles {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.7)
+                                    Text("Loading subtitles...")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(8)
+                                .padding(.trailing, 16)
+                                .padding(.top, geometry.safeAreaInsets.top + 60)
+                            }
+                            Spacer()
+                        }
                     }
                 } else {
                     VStack(spacing: 16) {
@@ -60,13 +111,136 @@ struct JellyfinPlayerView: View {
         .onDisappear {
             viewModel.cleanup(itemId: item.Id, jellyfinService: jellyfinService)
         }
+        .sheet(isPresented: $showSubtitlePicker) {
+            subtitlePickerSheet()
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+    }
+    
+    // MARK: - Subtitle Picker Sheet
+    
+    private func subtitlePickerSheet() -> some View {
+        NavigationView {
+            List {
+                // Off option
+                Button(action: {
+                    viewModel.selectSubtitle(index: nil, itemId: item.Id, jellyfinService: jellyfinService)
+                    showSubtitlePicker = false
+                }) {
+                    HStack {
+                        Text("Off")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        if viewModel.selectedSubtitleIndex == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(.purple)
+                        }
+                    }
+                }
+                
+                // Available subtitle tracks
+                ForEach(viewModel.availableSubtitles) { subtitle in
+                    Button(action: {
+                        viewModel.selectSubtitle(index: subtitle.Index, itemId: item.Id, jellyfinService: jellyfinService)
+                        showSubtitlePicker = false
+                    }) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(subtitle.subtitleDisplayName)
+                                    .foregroundColor(.primary)
+                                HStack(spacing: 8) {
+                                    if subtitle.IsExternal == true {
+                                        Text("External")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if let codec = subtitle.Codec {
+                                        Text(codec.uppercased())
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if subtitle.IsDefault == true {
+                                        Text("Default")
+                                            .font(.caption2)
+                                            .foregroundColor(.purple)
+                                    }
+                                }
+                            }
+                            Spacer()
+                            if viewModel.selectedSubtitleIndex == subtitle.Index {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.purple)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Subtitles")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        showSubtitlePicker = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Seek Preview Overlay
+    
+    private func seekPreviewOverlay() -> some View {
+        let targetTime = seekDragStartTime + seekDragOffset
+        let clampedTarget = max(0, min(targetTime, viewModel.safeDuration))
+        let offsetSign = seekDragOffset >= 0 ? "+" : ""
+        
+        return VStack(spacing: 4) {
+            Text("\(offsetSign)\(formatTime(seekDragOffset))")
+                .font(.system(size: 32, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+            
+            Text("(\(formatTime(clampedTarget)))")
+                .font(.system(size: 18, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(Color.black.opacity(0.7))
+        .cornerRadius(12)
+        .transition(.opacity)
+    }
+    
+    // MARK: - Double-tap Feedback
+    
+    private func doubleTapFeedbackOverlay() -> some View {
+        HStack {
+            if !doubleTapIsForward { Spacer() }
+            
+            VStack(spacing: 4) {
+                Image(systemName: doubleTapIsForward ? "goforward.\(Int(settings.doubleTapSeekSeconds))" : "gobackward.\(Int(settings.doubleTapSeekSeconds))")
+                    .font(.system(size: 40))
+                    .foregroundColor(.white)
+                
+                Text("\(Int(settings.doubleTapSeekSeconds))s")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            .padding(20)
+            .background(Color.black.opacity(0.5))
+            .clipShape(Circle())
+            
+            if doubleTapIsForward { Spacer() }
+        }
+        .padding(.horizontal, 60)
+        .transition(.opacity)
     }
     
     // MARK: - Gesture Overlay
     
     private func gestureOverlay(geometry: GeometryProxy) -> some View {
         HStack(spacing: 0) {
-            // Left Side: Brightness
+            // Left Side: Brightness + Double-tap backward
             Color.clear
                 .contentShape(Rectangle())
                 .frame(width: geometry.size.width / 3)
@@ -90,14 +264,52 @@ struct JellyfinPlayerView: View {
                             hideFeedback()
                         }
                 )
-                .onTapGesture { toggleControls() }
+                .onTapGesture(count: 2) {
+                    handleDoubleTap(isForward: false)
+                }
+                .onTapGesture(count: 1) {
+                    toggleControls()
+                }
             
-            // Center: Tap Only
+            // Center: Slide-to-seek + Tap
             Color.clear
                 .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 20, coordinateSpace: .local)
+                        .onChanged { value in
+                            if !isDraggingSeek {
+                                isDraggingSeek = true
+                                seekDragStartTime = viewModel.safeCurrentTime
+                            }
+                            
+                            // Calculate seek offset based on horizontal drag
+                            let dragDistance = value.translation.width
+                            seekDragOffset = Double(dragDistance) / settings.slideSeekSensitivity
+                            
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                showSeekPreview = true
+                            }
+                        }
+                        .onEnded { _ in
+                            if isDraggingSeek {
+                                // Apply the seek
+                                let newTime = max(0, min(seekDragStartTime + seekDragOffset, viewModel.safeDuration))
+                                viewModel.seek(to: newTime)
+                                
+                                isDraggingSeek = false
+                                seekDragOffset = 0
+                                
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    withAnimation {
+                                        showSeekPreview = false
+                                    }
+                                }
+                            }
+                        }
+                )
                 .onTapGesture { toggleControls() }
             
-            // Right Side: Volume
+            // Right Side: Volume + Double-tap forward
             Color.clear
                 .contentShape(Rectangle())
                 .frame(width: geometry.size.width / 3)
@@ -121,7 +333,12 @@ struct JellyfinPlayerView: View {
                             hideFeedback()
                         }
                 )
-                .onTapGesture { toggleControls() }
+                .onTapGesture(count: 2) {
+                    handleDoubleTap(isForward: true)
+                }
+                .onTapGesture(count: 1) {
+                    toggleControls()
+                }
         }
     }
     
@@ -162,6 +379,30 @@ struct JellyfinPlayerView: View {
                 
                 Spacer()
                 
+                // Aspect Ratio Button
+                Button(action: {
+                    _ = settings.cycleAspectRatio()
+                }) {
+                    Image(systemName: settings.currentAspectRatio.iconName)
+                        .foregroundColor(.white)
+                        .font(.title2)
+                        .padding(12)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                }
+                
+                // Subtitle Button
+                Button(action: {
+                    showSubtitlePicker = true
+                }) {
+                    Image(systemName: viewModel.selectedSubtitleIndex != nil ? "captions.bubble.fill" : "captions.bubble")
+                        .foregroundColor(viewModel.selectedSubtitleIndex != nil ? .purple : .white)
+                        .font(.title2)
+                        .padding(12)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                }
+                
                 Button(action: {
                     viewModel.toggleOrientation()
                 }) {
@@ -180,7 +421,7 @@ struct JellyfinPlayerView: View {
             
             // Center Controls
             HStack(spacing: 50) {
-                Button(action: { viewModel.seekRelative(by: -10) }) {
+                Button(action: { viewModel.seekRelative(by: -settings.skipButtonSeconds) }) {
                     PrismIcon.seekBackward.image
                         .font(.system(size: 30))
                         .foregroundColor(.white)
@@ -194,7 +435,7 @@ struct JellyfinPlayerView: View {
                         .shadow(radius: 5)
                 }
                 
-                Button(action: { viewModel.seekRelative(by: 10) }) {
+                Button(action: { viewModel.seekRelative(by: settings.skipButtonSeconds) }) {
                     PrismIcon.seekForward.image
                         .font(.system(size: 30))
                         .foregroundColor(.white)
@@ -252,7 +493,8 @@ struct JellyfinPlayerView: View {
             with: streamURL,
             itemId: item.Id,
             resumePosition: resumePosition,
-            jellyfinService: jellyfinService
+            jellyfinService: jellyfinService,
+            item: item
         )
     }
     
@@ -261,6 +503,22 @@ struct JellyfinPlayerView: View {
             viewModel.showControls.toggle()
         }
         viewModel.resetControlTimer()
+    }
+    
+    private func handleDoubleTap(isForward: Bool) {
+        doubleTapIsForward = isForward
+        let seekAmount = isForward ? settings.doubleTapSeekSeconds : -settings.doubleTapSeekSeconds
+        viewModel.seekRelative(by: seekAmount)
+        
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showDoubleTapFeedback = true
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            withAnimation {
+                showDoubleTapFeedback = false
+            }
+        }
     }
     
     private func showFeedback(text: String) {
@@ -279,15 +537,19 @@ struct JellyfinPlayerView: View {
     }
     
     private func formatTime(_ time: Double) -> String {
-        let totalSeconds = Int(time)
+        let isNegative = time < 0
+        let absTime = abs(time)
+        let totalSeconds = Int(absTime)
         let hours = totalSeconds / 3600
         let minutes = (totalSeconds % 3600) / 60
         let seconds = totalSeconds % 60
         
+        let prefix = isNegative ? "-" : ""
+        
         if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            return String(format: "%@%d:%02d:%02d", prefix, hours, minutes, seconds)
         }
-        return String(format: "%02d:%02d", minutes, seconds)
+        return String(format: "%@%02d:%02d", prefix, minutes, seconds)
     }
 }
 
@@ -345,11 +607,15 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var duration: Double = 1
     @Published var showControls = true
     @Published var isSeeking = false
+    @Published var availableSubtitles: [MediaStream] = []
+    @Published var selectedSubtitleIndex: Int? = nil
+    @Published var isLoadingSubtitles: Bool = false
     
     private var timeObserver: Any?
     private var controlTimer: Timer?
     private var progressReportTimer: Timer?
     private var currentItemId: String?
+    private var currentMediaSourceId: String?
     
     /// Safe duration value that's never NaN, negative, or zero
     var safeDuration: Double {
@@ -374,11 +640,49 @@ class JellyfinPlayerViewModel: ObservableObject {
         }
     }
     
-    func setupPlayer(with url: URL, itemId: String, resumePosition: Double, jellyfinService: JellyfinService) {
+    func setupPlayer(with url: URL, itemId: String, resumePosition: Double, jellyfinService: JellyfinService, item: JellyfinItem) {
         currentItemId = itemId
+        currentMediaSourceId = item.MediaSources?.first?.Id
+        
+        // Start loading subtitles
+        isLoadingSubtitles = true
+        
+        // Try to load subtitles from the passed item first
+        let subtitlesFromItem = jellyfinService.getSubtitleStreams(from: item)
+        if !subtitlesFromItem.isEmpty {
+            availableSubtitles = subtitlesFromItem
+            isLoadingSubtitles = false
+            print("Subtitles from item: \(availableSubtitles.map { $0.subtitleDisplayName })")
+        } else {
+            // Fetch full item details from server to get MediaStreams
+            print("No subtitles in item, fetching from server...")
+            jellyfinService.getItemDetails(itemId: itemId) { [weak self] detailedItem in
+                guard let self = self else { return }
+                if let detailedItem = detailedItem {
+                    // Extract subtitles directly from the item to avoid actor isolation issues
+                    if let mediaSource = detailedItem.MediaSources?.first,
+                       let streams = mediaSource.MediaStreams {
+                        self.availableSubtitles = streams.filter { $0.StreamType == "Subtitle" }
+                    }
+                    self.currentMediaSourceId = detailedItem.MediaSources?.first?.Id
+                    print("Subtitles from server: \(self.availableSubtitles.map { $0.subtitleDisplayName })")
+                    
+                    // Auto-enable default subtitle if available
+                    if let defaultSub = self.availableSubtitles.first(where: { $0.IsDefault == true }) {
+                        self.selectSubtitle(index: defaultSub.Index, itemId: itemId, jellyfinService: jellyfinService)
+                    }
+                } else {
+                    print("Failed to fetch item details for subtitles")
+                }
+                self.isLoadingSubtitles = false
+            }
+        }
         
         let playerItem = AVPlayerItem(url: url)
         player = AVPlayer(playerItem: playerItem)
+        
+        // Disable automatic media selection to allow manual subtitle control
+        player?.appliesMediaSelectionCriteriaAutomatically = false
         
         // Report playback start
         let startPositionTicks = Int64(resumePosition * 10_000_000)
@@ -416,6 +720,66 @@ class JellyfinPlayerViewModel: ObservableObject {
         resetControlTimer()
     }
     
+    func selectSubtitle(index: Int?, itemId: String, jellyfinService: JellyfinService) {
+        guard let playerItem = player?.currentItem else { return }
+        
+        if let subtitleIndex = index {
+            // Get subtitle URL from Jellyfin - use the media source ID
+            if let subtitleURL = jellyfinService.getSubtitleURL(
+                itemId: itemId,
+                mediaSourceId: currentMediaSourceId,
+                subtitleIndex: subtitleIndex
+            ) {
+                print("Loading subtitle from: \(subtitleURL)")
+                
+                // Add WebVTT subtitle as external track
+                Task { @MainActor in
+                    do {
+                        let asset = playerItem.asset
+                        // Try to load embedded subtitles first
+                        if let group = try await asset.loadMediaSelectionGroup(for: .legible) {
+                            // Find matching embedded track by index
+                            if let matchingOption = group.options.first(where: { option in
+                                // Try to match by language or display name
+                                let subtitleStream = availableSubtitles.first { $0.Index == subtitleIndex }
+                                if let lang = subtitleStream?.Language {
+                                    return option.locale?.identifier.contains(lang) == true
+                                }
+                                return false
+                            }) {
+                                playerItem.select(matchingOption, in: group)
+                                self.selectedSubtitleIndex = subtitleIndex
+                                print("Selected embedded subtitle: \(matchingOption.displayName)")
+                                return
+                            }
+                        }
+                    } catch {
+                        print("Failed to load embedded subtitles: \(error)")
+                    }
+                    
+                    // If no embedded track found, mark as selected anyway
+                    // (The HLS stream from Jellyfin includes subtitle tracks)
+                    self.selectedSubtitleIndex = subtitleIndex
+                    print("Subtitle selected: index \(subtitleIndex)")
+                }
+            }
+        } else {
+            // Disable subtitles
+            Task { @MainActor in
+                do {
+                    let asset = playerItem.asset
+                    if let group = try await asset.loadMediaSelectionGroup(for: .legible) {
+                        playerItem.select(nil, in: group)
+                    }
+                } catch {
+                    print("Failed to disable subtitles: \(error)")
+                }
+                self.selectedSubtitleIndex = nil
+                print("Subtitles disabled")
+            }
+        }
+    }
+    
     func togglePlayPause(itemId: String, jellyfinService: JellyfinService) {
         guard let player = player else { return }
         if isPlaying {
@@ -446,7 +810,7 @@ class JellyfinPlayerViewModel: ObservableObject {
     func resetControlTimer() {
         controlTimer?.invalidate()
         if isPlaying {
-            controlTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
+            controlTimer = Timer.scheduledTimer(withTimeInterval: PlayerSettings.shared.controlsAutoHideDelay, repeats: false) { [weak self] _ in
                 withAnimation {
                     self?.showControls = false
                 }

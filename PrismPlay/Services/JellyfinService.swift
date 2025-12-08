@@ -465,6 +465,38 @@ class JellyfinService: ObservableObject {
         return URL(string: urlString)
     }
     
+    // MARK: - Subtitles
+    
+    /// Get available subtitle streams from a JellyfinItem's MediaSources
+    func getSubtitleStreams(from item: JellyfinItem) -> [MediaStream] {
+        guard let mediaSource = item.MediaSources?.first,
+              let streams = mediaSource.MediaStreams else {
+            return []
+        }
+        
+        return streams.filter { $0.StreamType == "Subtitle" }
+    }
+    
+    /// Constructs a subtitle URL for a given media item and subtitle stream
+    /// Format: WebVTT for best iOS compatibility
+    func getSubtitleURL(itemId: String, mediaSourceId: String? = nil, subtitleIndex: Int) -> URL? {
+        guard !serverURL.isEmpty, !accessToken.isEmpty else { return nil }
+        
+        let sourceId = mediaSourceId ?? itemId
+        // Request WebVTT format which AVPlayer can handle via AVMediaSelectionOption
+        let urlString = "\(serverURL)/Videos/\(itemId)/\(sourceId)/Subtitles/\(subtitleIndex)/Stream.vtt?api_key=\(accessToken)"
+        return URL(string: urlString)
+    }
+    
+    /// Constructs a subtitle URL in SRT format (for download/external use)
+    func getSubtitleSRTURL(itemId: String, mediaSourceId: String? = nil, subtitleIndex: Int) -> URL? {
+        guard !serverURL.isEmpty, !accessToken.isEmpty else { return nil }
+        
+        let sourceId = mediaSourceId ?? itemId
+        let urlString = "\(serverURL)/Videos/\(itemId)/\(sourceId)/Subtitles/\(subtitleIndex)/Stream.srt?api_key=\(accessToken)"
+        return URL(string: urlString)
+    }
+    
     // MARK: - Resume / Continue Watching
     
     /// Fetches items that the user has partially watched (Continue Watching)
