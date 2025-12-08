@@ -17,8 +17,8 @@ struct HomeView: View {
         NavigationView {
             ZStack {
                 // Background
-                LinearGradient(gradient: Gradient(colors: [Color.purple.opacity(0.4), Color.blue.opacity(0.4)]), startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .edgesIgnoringSafeArea(.all)
+                // Background
+                PrismBackground()
                 
                 if jellyfinService.savedServers.isEmpty {
                     // No server configured
@@ -93,11 +93,7 @@ struct HomeView: View {
                                     LibraryRowView(
                                         library: libraryWithItems.library,
                                         items: libraryWithItems.items,
-                                        jellyfinService: jellyfinService,
-                                        onSeeMore: {
-                                            // Navigate to full library view
-                                            // TODO: Implement navigation to full library
-                                        }
+                                        jellyfinService: jellyfinService
                                     )
                                 }
                             }
@@ -125,32 +121,72 @@ struct HomeView: View {
         isLoading = true
         librariesWithItems = []
         
-        jellyfinService.fetchLibraries { libraries in
-            Task { @MainActor in
-                guard let libraries = libraries else {
-                    isLoading = false
-                    return
-                }
-                
-                let group = DispatchGroup()
-                var tempLibrariesWithItems: [LibraryWithItems] = []
-                
+        Task {
+            // First fetch libraries
+            guard let libraries = await fetchLibrariesAsync() else {
+                await MainActor.run { isLoading = false }
+                return
+            }
+            
+            // Then fetch items for each library in parallel
+            var newLibrariesWithItems: [LibraryWithItems] = []
+            
+            await withTaskGroup(of: LibraryWithItems?.self) { group in
                 for library in libraries {
-                    group.enter()
-                    jellyfinService.fetchLibraryItems(libraryId: library.Id, limit: 10) { items in
-                        if let items = items {
-                            tempLibrariesWithItems.append(LibraryWithItems(library: library, items: items))
+                    group.addTask {
+                        if let items = await fetchLibraryItemsAsync(libraryId: library.Id, limit: 10) {
+                            return LibraryWithItems(library: library, items: items)
                         }
-                        group.leave()
+                        return nil
                     }
                 }
                 
-                group.notify(queue: .main) {
-                    Task { @MainActor in
-                        self.librariesWithItems = tempLibrariesWithItems
-                        self.isLoading = false
+                for await result in group {
+                    if let libItem = result {
+                        newLibrariesWithItems.append(libItem)
                     }
                 }
+            }
+            
+            // Sort libraries on Main Actor
+            await MainActor.run {
+                // Sort libraries: Movies first, then TV Shows, then others
+                let sortedLibraries = newLibrariesWithItems.sorted { lib1, lib2 in
+                    let type1 = lib1.library.CollectionType?.lowercased() ?? ""
+                    let type2 = lib2.library.CollectionType?.lowercased() ?? ""
+                    
+                    if type1 == "movies" && type2 != "movies" {
+                        return true
+                    } else if type1 != "movies" && type2 == "movies" {
+                        return false
+                    } else if type1 == "tvshows" && type2 != "tvshows" && type2 != "movies" {
+                        return true
+                    } else if type1 != "tvshows" && type1 != "movies" && type2 == "tvshows" {
+                        return false
+                    }
+                    return lib1.library.Name < lib2.library.Name
+                }
+                
+                self.librariesWithItems = sortedLibraries
+                self.isLoading = false
+            }
+        }
+    }
+    
+    // Helper async wrappers (since JellyfinService uses callbacks)
+    // Ideally JellyfinService should expose async methods, but we can wrap them here or update JellyfinService later.
+    private func fetchLibrariesAsync() async -> [JellyfinLibrary]? {
+        await withCheckedContinuation { continuation in
+            jellyfinService.fetchLibraries { libraries in
+                continuation.resume(returning: libraries)
+            }
+        }
+    }
+    
+    private func fetchLibraryItemsAsync(libraryId: String, limit: Int) async -> [JellyfinItem]? {
+        await withCheckedContinuation { continuation in
+            jellyfinService.fetchLibraryItems(libraryId: libraryId, limit: limit) { items in
+                continuation.resume(returning: items)
             }
         }
     }

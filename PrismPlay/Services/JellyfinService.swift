@@ -96,9 +96,9 @@ class JellyfinService: ObservableObject {
                 return
             }
             
-            do {
-                let authResponse = try JSONDecoder().decode(JellyfinAuthResponse.self, from: data)
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                do {
+                    let authResponse = try JellyfinDecoder.decode(JellyfinAuthResponse.self, from: data)
                     self?.serverURL = server
                     self?.userId = authResponse.User.Id
                     self?.accessToken = authResponse.AccessToken
@@ -108,9 +108,7 @@ class JellyfinService: ObservableObject {
                     self?.addServer(url: server, username: username, userId: authResponse.User.Id, accessToken: authResponse.AccessToken)
                     
                     completion(.success(true))
-                }
-            } catch {
-                DispatchQueue.main.async {
+                } catch {
                     // Try to decode error string if possible, or just print data
                     print("Decoding error: \(error)")
                     if let str = String(data: data, encoding: .utf8) {
@@ -156,22 +154,69 @@ class JellyfinService: ObservableObject {
                 return
             }
             
-            do {
-                let itemsResponse = try JSONDecoder().decode(JellyfinItemsResponse.self, from: data)
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
                     completion(itemsResponse.Items)
+                } catch {
+                    print("Error decoding items: \(error)")
+                    completion(nil)
                 }
-            } catch {
-                print("Error decoding items: \(error)")
-                DispatchQueue.main.async { completion(nil) }
             }
         }.resume()
     }
     
-    func imageURL(for itemId: String, imageTag: String?) -> URL? {
+    func getItemDetails(itemId: String, completion: @escaping @Sendable (JellyfinItem?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        // Fetch details including People, Overview, Genres, etc.
+        let urlString = "\(serverURL)/Users/\(userId)/Items/\(itemId)?Fields=People,Overview,Genres,RunTimeTicks,ProductionYear,CommunityRating,OfficialRating,PrimaryImageAspectRatio,DateCreated,MediaSources,BackdropImageTags"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching item details: \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let item = try JellyfinDecoder.decode(JellyfinItem.self, from: data)
+                    completion(item)
+                } catch {
+                    print("Error decoding item details: \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+    
+    func imageURL(for itemId: String, imageTag: String?, type: String = "Primary") -> URL? {
         guard !serverURL.isEmpty else { return nil }
-        // /Items/{Id}/Images/Primary
-        var urlString = "\(serverURL)/Items/\(itemId)/Images/Primary"
+        
+        var urlString = ""
+        if type == "Backdrop" {
+             urlString = "\(serverURL)/Items/\(itemId)/Images/Backdrop/0"
+        } else {
+             urlString = "\(serverURL)/Items/\(itemId)/Images/\(type)"
+        }
+        
         if let tag = imageTag {
             urlString += "?tag=\(tag)"
         }
@@ -206,14 +251,14 @@ class JellyfinService: ObservableObject {
                 return
             }
             
-            do {
-                let librariesResponse = try JSONDecoder().decode(JellyfinLibrariesResponse.self, from: data)
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                do {
+                    let librariesResponse = try JellyfinDecoder.decode(JellyfinLibrariesResponse.self, from: data)
                     completion(librariesResponse.Items)
+                } catch {
+                    print("Error decoding libraries: \(error)")
+                    completion(nil)
                 }
-            } catch {
-                print("Error decoding libraries: \(error)")
-                DispatchQueue.main.async { completion(nil) }
             }
         }.resume()
     }
@@ -224,7 +269,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName&SortBy=SortName&SortOrder=Ascending"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated&SortBy=DateCreated&SortOrder=Descending"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -246,14 +291,156 @@ class JellyfinService: ObservableObject {
                 return
             }
             
-            do {
-                let itemsResponse = try JSONDecoder().decode(JellyfinItemsResponse.self, from: data)
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
                     completion(itemsResponse.Items)
+                } catch {
+                    print("Error decoding library items: \(error)")
+                    completion(nil)
                 }
-            } catch {
-                print("Error decoding library items: \(error)")
+            }
+        }.resume()
+    }
+    
+    func fetchLibraryItemsPaginated(
+        libraryId: String,
+        startIndex: Int = 0,
+        limit: Int = 30,
+        sortBy: String = "DateCreated",
+        sortOrder: String = "Descending",
+        completion: @escaping @Sendable ([JellyfinItem]?) -> Void
+    ) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching library items: \(error)")
                 DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    completion(itemsResponse.Items)
+                } catch {
+                    print("Error decoding library items: \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+    func fetchItems(byPersonId personId: String, limit: Int = 50, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        let urlString = "\(serverURL)/Users/\(userId)/Items?PersonIds=\(personId)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear&SortBy=DateCreated&SortOrder=Descending"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, completion: completion)
+    }
+    
+    func fetchItems(byGenre genre: String, limit: Int = 50, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        // Genre might need to be URL encoded
+        guard let encodedGenre = genre.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            completion(nil)
+            return
+        }
+        
+        let urlString = "\(serverURL)/Users/\(userId)/Items?Genres=\(encodedGenre)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear&SortBy=DateCreated&SortOrder=Descending"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, completion: completion)
+    }
+    
+    func fetchSeasons(seriesId: String, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(seriesId)&IncludeItemTypes=Season&SortBy=SortName"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, completion: completion)
+    }
+    
+    func fetchEpisodes(seriesId: String, seasonId: String, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
+            completion(nil)
+            return
+        }
+        
+        // Fetch episodes for a specific season
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(seasonId)&IncludeItemTypes=Episode&SortBy=SortName,IndexNumber&Fields=PrimaryImageAspectRatio,Overview,IndexNumber,ParentIndexNumber,MediaSources,RunTimeTicks"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, completion: completion)
+    }
+
+    private func performRequest(url: URL, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching items: \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    completion(itemsResponse.Items)
+                } catch {
+                    print("Error decoding items: \(error)")
+                    completion(nil)
+                }
             }
         }.resume()
     }

@@ -11,7 +11,7 @@ struct MediaLibraryView: View {
     
     var body: some View {
         ZStack {
-            Color.black.edgesIgnoringSafeArea(.all)
+            PrismBackground()
             
             if isLoading {
                 ProgressView("Loading Library...")
@@ -41,7 +41,7 @@ struct MediaLibraryView: View {
                                     .font(.caption)
                                     .fontWeight(.medium)
                                     .foregroundColor(.white)
-                                    .lineLimit(1)
+                                    .lineLimit(nil)
                             }
                         }
                     }

@@ -8,8 +8,8 @@ struct LocalFilesView: View {
         NavigationView {
             ZStack {
                 // Background
-                LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.3), Color.cyan.opacity(0.3)]), startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .edgesIgnoringSafeArea(.all)
+                // Background
+                PrismBackground()
                 
                 VStack(spacing: 30) {
                     

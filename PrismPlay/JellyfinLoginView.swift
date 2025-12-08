@@ -11,7 +11,7 @@ struct JellyfinLoginView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color.black.edgesIgnoringSafeArea(.all)
+                PrismBackground()
                 
                 VStack(spacing: 20) {
                     Text("Connect to Jellyfin")

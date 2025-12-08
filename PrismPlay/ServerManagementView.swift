@@ -8,8 +8,8 @@ struct ServerManagementView: View {
         NavigationView {
             ZStack {
                 // Background
-                LinearGradient(gradient: Gradient(colors: [Color.black, Color.purple.opacity(0.3)]), startPoint: .top, endPoint: .bottom)
-                    .edgesIgnoringSafeArea(.all)
+                // Background
+                PrismBackground()
                 
                 VStack {
                     if jellyfinService.savedServers.isEmpty {
