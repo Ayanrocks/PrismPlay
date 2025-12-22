@@ -66,6 +66,24 @@ struct JellyfinPlayerView: View {
                             .transition(.opacity)
                     }
                     
+                    // Custom Subtitle Overlay
+                    if let subtitleText = viewModel.currentSubtitleText {
+                        VStack {
+                            Spacer()
+                            Text(subtitleText)
+                                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(8)
+                                .multilineTextAlignment(.center)
+                                .padding(.bottom, 20)
+                                .padding(.horizontal, 32)
+                                .transition(.opacity)
+                        }
+                    }
+                    
                     if viewModel.showControls {
                         controlsOverlay(geometry: geometry)
                     }
@@ -610,6 +628,9 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var availableSubtitles: [MediaStream] = []
     @Published var selectedSubtitleIndex: Int? = nil
     @Published var isLoadingSubtitles: Bool = false
+    @Published var currentSubtitleText: String? = nil
+    
+    private var subtitleCues: [SubtitleCue] = []
     
     private var timeObserver: Any?
     private var controlTimer: Timer?
@@ -688,10 +709,27 @@ class JellyfinPlayerViewModel: ObservableObject {
         let startPositionTicks = Int64(resumePosition * 10_000_000)
         jellyfinService.reportPlaybackStart(itemId: itemId, positionTicks: startPositionTicks)
         
-        // Time observer for progress tracking
-        timeObserver = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
-            guard let self = self, !self.isSeeking else { return }
-            self.currentTime = CMTimeGetSeconds(time)
+        // Time observer for progress tracking and subtitles
+        timeObserver = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
+            guard let self = self else { return }
+            
+            if !self.isSeeking {
+                self.currentTime = CMTimeGetSeconds(time)
+                
+                // Update subtitle text
+                if !self.subtitleCues.isEmpty {
+                    let currentSeconds = self.currentTime
+                    if let cue = self.subtitleCues.first(where: { currentSeconds >= $0.startTime && currentSeconds <= $0.endTime }) {
+                        if self.currentSubtitleText != cue.text {
+                            self.currentSubtitleText = cue.text
+                        }
+                    } else {
+                        if self.currentSubtitleText != nil {
+                            self.currentSubtitleText = nil
+                        }
+                    }
+                }
+            }
             
             // Update duration from player item
             if let currentItem = self.player?.currentItem {
@@ -721,50 +759,65 @@ class JellyfinPlayerViewModel: ObservableObject {
     }
     
     func selectSubtitle(index: Int?, itemId: String, jellyfinService: JellyfinService) {
+        // Reset current subtitles
+        self.subtitleCues = []
+        self.currentSubtitleText = nil
+        
         guard let playerItem = player?.currentItem else { return }
         
         if let subtitleIndex = index {
-            // Get subtitle URL from Jellyfin - use the media source ID
+            self.selectedSubtitleIndex = subtitleIndex
+            
+            // Get subtitle URL from Jellyfin
             if let subtitleURL = jellyfinService.getSubtitleURL(
                 itemId: itemId,
                 mediaSourceId: currentMediaSourceId,
                 subtitleIndex: subtitleIndex
             ) {
-                print("Loading subtitle from: \(subtitleURL)")
+                print("Loading external subtitle from: \(subtitleURL)")
+                self.isLoadingSubtitles = true
                 
-                // Add WebVTT subtitle as external track
+                // Fetch and parse VTT content
+                Task {
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: subtitleURL)
+                        if let content = String(data: data, encoding: .utf8) {
+                            print("Fetched subtitle content (first 200 chars): \(content.prefix(200))")
+                            let cues = SubtitleParser.parseWebVTT(content)
+                            
+                            await MainActor.run {
+                                self.subtitleCues = cues
+                                self.isLoadingSubtitles = false
+                                print("Parsed \(cues.count) subtitle cues")
+                            }
+                        } else {
+                            print("Failed to decode subtitle content")
+                            await MainActor.run { self.isLoadingSubtitles = false }
+                        }
+                    } catch {
+                        print("Failed to fetch subtitle content: \(error)")
+                        await MainActor.run { self.isLoadingSubtitles = false }
+                    }
+                }
+                
+                // Disable embedded tracks to avoid double subtitles if AVPlayer happens to support them
                 Task { @MainActor in
                     do {
                         let asset = playerItem.asset
-                        // Try to load embedded subtitles first
                         if let group = try await asset.loadMediaSelectionGroup(for: .legible) {
-                            // Find matching embedded track by index
-                            if let matchingOption = group.options.first(where: { option in
-                                // Try to match by language or display name
-                                let subtitleStream = availableSubtitles.first { $0.Index == subtitleIndex }
-                                if let lang = subtitleStream?.Language {
-                                    return option.locale?.identifier.contains(lang) == true
-                                }
-                                return false
-                            }) {
-                                playerItem.select(matchingOption, in: group)
-                                self.selectedSubtitleIndex = subtitleIndex
-                                print("Selected embedded subtitle: \(matchingOption.displayName)")
-                                return
-                            }
+                            playerItem.select(nil, in: group)
                         }
                     } catch {
-                        print("Failed to load embedded subtitles: \(error)")
+                         // ignore errors here
                     }
-                    
-                    // If no embedded track found, mark as selected anyway
-                    // (The HLS stream from Jellyfin includes subtitle tracks)
-                    self.selectedSubtitleIndex = subtitleIndex
-                    print("Subtitle selected: index \(subtitleIndex)")
                 }
             }
         } else {
             // Disable subtitles
+            self.selectedSubtitleIndex = nil
+            self.subtitleCues = []
+            self.currentSubtitleText = nil
+            
             Task { @MainActor in
                 do {
                     let asset = playerItem.asset
@@ -774,7 +827,6 @@ class JellyfinPlayerViewModel: ObservableObject {
                 } catch {
                     print("Failed to disable subtitles: \(error)")
                 }
-                self.selectedSubtitleIndex = nil
                 print("Subtitles disabled")
             }
         }
