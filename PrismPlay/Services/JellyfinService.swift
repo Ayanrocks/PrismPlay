@@ -449,11 +449,14 @@ class JellyfinService: ObservableObject {
     
     /// Constructs a streaming URL using HLS transcoding for universal iOS compatibility
     /// Server handles transcoding to H.264/AAC which AVPlayer can handle
-    func getStreamURL(itemId: String) -> URL? {
+    func getStreamURL(itemId: String, maxBitrate: Int? = nil) -> URL? {
         guard !serverURL.isEmpty, !accessToken.isEmpty, !userId.isEmpty else { return nil }
         
         // HLS master playlist - Jellyfin transcodes to iOS-compatible format
-        let urlString = "\(serverURL)/Videos/\(itemId)/master.m3u8?UserId=\(userId)&api_key=\(accessToken)&MediaSourceId=\(itemId)&VideoCodec=h264&AudioCodec=aac&MaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=true"
+        // Default video bitrate is set very high (120Mbps) if not specified to ensure best quality
+        let bitrate = maxBitrate ?? 120_000_000
+        
+        let urlString = "\(serverURL)/Videos/\(itemId)/master.m3u8?UserId=\(userId)&api_key=\(accessToken)&MediaSourceId=\(itemId)&VideoCodec=h264&AudioCodec=aac&MaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=true&VideoBitrate=\(bitrate)"
         return URL(string: urlString)
     }
     

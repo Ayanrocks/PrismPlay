@@ -4,6 +4,20 @@ import MediaPlayer
 import Combine
 
 /// A video player view for Jellyfin content using AVPlayer with HLS streaming
+struct VideoQuality: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let bitrate: Int? // nil for "Best" (max)
+    
+    static let best = VideoQuality(id: "best", name: "Best (High Quality)", bitrate: nil)
+    static let p1080 = VideoQuality(id: "1080p", name: "1080p (10 Mbps)", bitrate: 10_000_000)
+    static let p720 = VideoQuality(id: "720p", name: "720p (4 Mbps)", bitrate: 4_000_000)
+    static let p480 = VideoQuality(id: "480p", name: "480p (1.5 Mbps)", bitrate: 1_500_000)
+    static let p360 = VideoQuality(id: "360p", name: "360p (0.7 Mbps)", bitrate: 700_000)
+    
+    static let allCases = [best, p1080, p720, p480, p360]
+}
+
 struct JellyfinPlayerView: View {
     let item: JellyfinItem
     @StateObject private var viewModel = JellyfinPlayerViewModel()
@@ -431,6 +445,29 @@ struct JellyfinPlayerView: View {
                         .background(Color.black.opacity(0.5))
                         .clipShape(Circle())
                 }
+                
+                // Quality Button
+                Menu {
+                    ForEach(VideoQuality.allCases) { quality in
+                        Button(action: {
+                            viewModel.changeQuality(to: quality, jellyfinService: jellyfinService)
+                        }) {
+                            HStack {
+                                Text(quality.name)
+                                if viewModel.selectedQuality == quality {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .foregroundColor(.white)
+                        .font(.title2)
+                        .padding(12)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, geometry.safeAreaInsets.top > 0 ? geometry.safeAreaInsets.top : 16)
@@ -629,6 +666,7 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var selectedSubtitleIndex: Int? = nil
     @Published var isLoadingSubtitles: Bool = false
     @Published var currentSubtitleText: String? = nil
+    @Published var selectedQuality: VideoQuality = .best
     
     private var subtitleCues: [SubtitleCue] = []
     
@@ -756,6 +794,43 @@ class JellyfinPlayerViewModel: ObservableObject {
         player?.play()
         isPlaying = true
         resetControlTimer()
+    }
+    
+    func changeQuality(to quality: VideoQuality, jellyfinService: JellyfinService) {
+        guard selectedQuality != quality, let itemId = currentItemId else { return }
+        
+        let resumeTime = safeCurrentTime
+        selectedQuality = quality
+        
+        // Stop current player but keep state
+        player?.pause()
+        
+        guard let streamURL = jellyfinService.getStreamURL(itemId: itemId, maxBitrate: quality.bitrate) else {
+            return
+        }
+        
+        let playerItem = AVPlayerItem(url: streamURL)
+        player?.replaceCurrentItem(with: playerItem)
+        
+        // Seek to previous position
+        let cmTime = CMTime(seconds: resumeTime, preferredTimescale: 600)
+        player?.seek(to: cmTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        
+        // Restore subtitle selection if needed
+        // Subtitle tracks are separate from video variants in Jellyfin HLS usually,
+        // but if we reload the item we might need to re-apply the external text track.
+        // Since we are just replacing the item, we might need to re-select the subtitle.
+        // For simplicity, we'll just let the user re-select if it drops, or we can improve this later.
+        // However, since we store selectedSubtitleIndex, we can try to re-apply it.
+        if let subIndex = selectedSubtitleIndex {
+            // Re-apply subtitle logic after a short delay or state update mechanism
+            // For now, simpler is better. The view will re-render.
+            selectSubtitle(index: subIndex, itemId: itemId, jellyfinService: jellyfinService)
+        }
+        
+        if isPlaying {
+            player?.play()
+        }
     }
     
     func selectSubtitle(index: Int?, itemId: String, jellyfinService: JellyfinService) {
