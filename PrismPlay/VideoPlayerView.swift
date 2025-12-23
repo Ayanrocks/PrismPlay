@@ -535,6 +535,16 @@ class PlayerViewModel: ObservableObject {
         player?.play()
         isPlaying = true
         resetControlTimer()
+        configureAudioSession()
+    }
+    
+    private func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to configure audio session: \(error)")
+        }
     }
     
     private func loadSubtitleOptions(from playerItem: AVPlayerItem) async {

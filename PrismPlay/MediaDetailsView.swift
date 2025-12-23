@@ -93,7 +93,7 @@ struct MediaDetailsView: View {
                                 }
                                 
                                 if let runtime = detailedItem?.RunTimeTicks {
-                                    let minutes = runtime / 10_000_000 / 60
+                                    let _ = runtime / 10_000_000 / 60
                                 }
                             }
                             

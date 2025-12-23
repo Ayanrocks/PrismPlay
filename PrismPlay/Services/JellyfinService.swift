@@ -447,17 +447,66 @@ class JellyfinService: ObservableObject {
     
     // MARK: - Streaming URL
     
+    enum PlaybackProfile {
+        case high       // Try max quality: HEVC, Copy if possible
+        case compatible // Force safe: H264/AAC, Transcode
+        
+        var videoCodec: String {
+            switch self {
+            case .high: return "h264,hevc"
+            case .compatible: return "h264"
+            }
+        }
+        
+        var audioCodec: String {
+            switch self {
+            case .high: return "aac,mp3,ac3,eac3"
+            case .compatible: return "aac"
+            }
+        }
+        
+        var segmentContainer: String {
+            switch self {
+            case .high: return "ts" // kept as ts for safety vs fMP4 issues
+            case .compatible: return "ts"
+            }
+        }
+        
+        var transcodingProtocol: String {
+             return "hls"
+        }
+    }
+    
     /// Constructs a streaming URL using HLS transcoding for universal iOS compatibility
-    /// Server handles transcoding to H.264/AAC which AVPlayer can handle
-    func getStreamURL(itemId: String, maxBitrate: Int? = nil) -> URL? {
+    func getStreamURL(itemId: String, profile: PlaybackProfile = .high, maxBitrate: Int? = nil) -> URL? {
         guard !serverURL.isEmpty, !accessToken.isEmpty, !userId.isEmpty else { return nil }
         
-        // HLS master playlist - Jellyfin transcodes to iOS-compatible format
-        // Default video bitrate is set very high (120Mbps) if not specified to ensure best quality
         let bitrate = maxBitrate ?? 120_000_000
         
-        let urlString = "\(serverURL)/Videos/\(itemId)/master.m3u8?UserId=\(userId)&api_key=\(accessToken)&MediaSourceId=\(itemId)&VideoCodec=h264&AudioCodec=aac&MaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&BreakOnNonKeyFrames=true&VideoBitrate=\(bitrate)"
-        return URL(string: urlString)
+        // Construct the URL with profile-specific parameters
+        // BreakOnNonKeyFrames=true and MinSegments=1 help with seek performance
+        var components = URLComponents(string: "\(serverURL)/Videos/\(itemId)/master.m3u8")
+        
+        components?.queryItems = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "api_key", value: accessToken),
+            URLQueryItem(name: "MediaSourceId", value: itemId),
+            URLQueryItem(name: "VideoCodec", value: profile.videoCodec),
+            URLQueryItem(name: "AudioCodec", value: profile.audioCodec),
+            URLQueryItem(name: "MaxAudioChannels", value: "6"),
+            URLQueryItem(name: "SegmentContainer", value: profile.segmentContainer),
+            URLQueryItem(name: "MinSegments", value: "1"),
+            URLQueryItem(name: "BreakOnNonKeyFrames", value: "true"),
+            URLQueryItem(name: "TranscodingProtocol", value: profile.transcodingProtocol),
+            URLQueryItem(name: "VideoBitrate", value: String(bitrate))
+        ]
+        
+        if profile == .compatible {
+            // Force strict transcoding params for compatibility mode
+            // We intentionally don't set 'Static=true' to ensure we get a transcoded stream if needed
+        }
+        
+        return components?.url
     }
     
     /// Constructs a direct stream URL (only for iOS-native formats like MP4/H.264)

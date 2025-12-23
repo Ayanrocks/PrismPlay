@@ -14,6 +14,21 @@ struct LibraryRowView: View {
                     .foregroundColor(.white)
                 
                 Spacer()
+                
+                NavigationLink(destination: FullLibraryView(library: library)) {
+                    HStack(spacing: 4) {
+                        Text("See More")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.gray)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.white.opacity(0.1))
+                    .cornerRadius(20)
+                }
             }
             .padding(.horizontal)
             
@@ -47,22 +62,6 @@ struct LibraryRowView: View {
                                     .multilineTextAlignment(.leading)
                             }
                         }
-                    }
-                    
-                    // See More button with NavigationLink
-                    NavigationLink(destination: FullLibraryView(library: library)) {
-                        VStack {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundColor(.white.opacity(0.8))
-                            
-                            Text("See More")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.8))
-                        }
-                        .frame(width: 120, height: 180)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(10)
                     }
                 }
                 .padding(.horizontal)

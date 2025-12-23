@@ -38,30 +38,46 @@ struct ServerManagementView: View {
                     } else {
                         List {
                             ForEach(jellyfinService.savedServers) { server in
-                                NavigationLink(destination: MediaLibraryView().onAppear {
+                                Button(action: {
                                     jellyfinService.selectServer(server)
                                 }) {
                                     HStack {
-                                        VStack(alignment: .leading) {
+                                        VStack(alignment: .leading, spacing: 4) {
                                             Text(server.name)
                                                 .font(.headline)
-                                                .foregroundColor(.primary)
+                                                .foregroundColor(.white)
                                             Text(server.url)
                                                 .font(.subheadline)
-                                                .foregroundColor(.secondary)
+                                                .foregroundColor(.white.opacity(0.7))
                                         }
                                         Spacer()
                                         if jellyfinService.isAuthenticated && jellyfinService.serverURL == server.url && jellyfinService.userId == server.userId {
                                             Image(systemName: "checkmark.circle.fill")
+                                                .font(.title2)
                                                 .foregroundColor(.green)
+                                        } else {
+                                            Image(systemName: "chevron.right")
+                                                .font(.footnote)
+                                                .foregroundColor(.white.opacity(0.3))
                                         }
                                     }
-                                    .padding(.vertical, 8)
+                                    .padding()
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 15)
+                                            .fill(Color.white.opacity(0.1))
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 15)
+                                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                            )
+                                    )
                                 }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                             }
                             .onDelete(perform: deleteServer)
                         }
-                        .listStyle(InsetGroupedListStyle())
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }

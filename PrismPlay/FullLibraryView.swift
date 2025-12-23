@@ -47,29 +47,33 @@ struct FullLibraryView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(items) { item in
-                        VStack {
-                            AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Rectangle()
-                                    .fill(Color.gray.opacity(0.3))
-                                    .overlay(
-                                        Image(systemName: "film")
-                                            .foregroundColor(.white)
-                                    )
+                        NavigationLink(destination: MediaDetailsView(item: item)) {
+                            VStack {
+                                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.3))
+                                        .overlay(
+                                            Image(systemName: "film")
+                                                .foregroundColor(.white)
+                                        )
+                                }
+                                .frame(height: 220)
+                                .cornerRadius(10)
+                                .clipped()
+                                
+                                Text(item.Name)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.white)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
                             }
-                            .frame(height: 220)
-                            .cornerRadius(10)
-                            .clipped()
-                            
-                            Text(item.Name)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                                .lineLimit(2)
                         }
+                        .buttonStyle(PlainButtonStyle()) // Keeps the original look without blue link styling
                         .onAppear {
                             // Load more when approaching end
                             if item.id == items.last?.id && !isLoading && hasMoreItems {

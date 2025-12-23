@@ -127,10 +127,40 @@ struct JellyfinPlayerView: View {
                     }
                 } else {
                     VStack(spacing: 16) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        Text("Loading...")
-                            .foregroundColor(.white.opacity(0.7))
+                        if let error = viewModel.errorMessage {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 50))
+                                .foregroundColor(.yellow)
+                            Text("Playback Error")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            Button("Close") {
+                                dismiss()
+                            }
+                            .padding(.top, 10)
+                            .buttonStyle(.bordered)
+                            .tint(.white)
+                        } else if viewModel.isRetrying {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            Text("Playback failed, optimizing format...")
+                                .foregroundColor(.white.opacity(0.9))
+                                .font(.headline)
+                            Text("This may take a moment")
+                                .foregroundColor(.white.opacity(0.6))
+                                .font(.caption)
+                        } else {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            Text("Loading...")
+                                .foregroundColor(.white.opacity(0.7))
+                        }
                     }
                 }
             }
@@ -281,13 +311,13 @@ struct JellyfinPlayerView: View {
                         .onChanged { value in
                             if !isDraggingBrightness {
                                 isDraggingBrightness = true
-                                dragStartBrightness = UIScreen.main.brightness
+                                dragStartBrightness = ScreenUtils.brightness
                             }
                             
                             let delta = -value.translation.height / geometry.size.height
                             let newBrightness = min(max(dragStartBrightness + delta, 0.0), 1.0)
                             
-                            UIScreen.main.brightness = newBrightness
+                            ScreenUtils.brightness = newBrightness
                             showFeedback(text: "Brightness: \(Int(newBrightness * 100))%")
                         }
                         .onEnded { _ in
@@ -536,16 +566,10 @@ struct JellyfinPlayerView: View {
     // MARK: - Helper Methods
     
     private func setupPlayer() {
-        guard let streamURL = jellyfinService.getStreamURL(itemId: item.Id) else {
-            print("Failed to get stream URL for item: \(item.Id)")
-            return
-        }
-        
-        // Get resume position from UserData if available
+        // We no longer manually get streamURL here; let the ViewModel handle it
         let resumePosition = item.UserData?.playbackPositionSeconds ?? 0
         
         viewModel.setupPlayer(
-            with: streamURL,
             itemId: item.Id,
             resumePosition: resumePosition,
             jellyfinService: jellyfinService,
@@ -624,7 +648,7 @@ class VolumeController: NSObject {
     private func setupVolumeView() {
         volumeView = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 100, height: 40))
         volumeView.showsVolumeSlider = true
-        volumeView.showsRouteButton = false
+        // volumeView.showsRouteButton = false // Deprecated in iOS 13
         
         // Find the slider in the volume view
         for subview in volumeView.subviews {
@@ -667,14 +691,21 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var isLoadingSubtitles: Bool = false
     @Published var currentSubtitleText: String? = nil
     @Published var selectedQuality: VideoQuality = .best
+    @Published var errorMessage: String? = nil
+    @Published var isRetrying: Bool = false
     
+    private var currentProfile: JellyfinService.PlaybackProfile = .high
     private var subtitleCues: [SubtitleCue] = []
     
     private var timeObserver: Any?
+    private var statusObserver: Any?
     private var controlTimer: Timer?
     private var progressReportTimer: Timer?
     private var currentItemId: String?
     private var currentMediaSourceId: String?
+    private var currentItem: JellyfinItem? // Keep reference for retries
+    
+    /// Safe duration value that's never NaN, negative, or zero
     
     /// Safe duration value that's never NaN, negative, or zero
     var safeDuration: Double {
@@ -699,46 +730,84 @@ class JellyfinPlayerViewModel: ObservableObject {
         }
     }
     
-    func setupPlayer(with url: URL, itemId: String, resumePosition: Double, jellyfinService: JellyfinService, item: JellyfinItem) {
-        currentItemId = itemId
-        currentMediaSourceId = item.MediaSources?.first?.Id
+    func setupPlayer(with url: URL? = nil, itemId: String, resumePosition: Double, jellyfinService: JellyfinService, item: JellyfinItem) {
+        self.currentItemId = itemId
+        self.currentItem = item
+        self.currentMediaSourceId = item.MediaSources?.first?.Id
         
-        // Start loading subtitles
-        isLoadingSubtitles = true
+        // Initial setup with high profile if no URL is manually provided (legacy support)
+        // If it's a retry, we might be calling internalSetup directly, but this is the public entry point
+        // So reset to high profile on fresh start
+        self.currentProfile = .high
         
-        // Try to load subtitles from the passed item first
-        let subtitlesFromItem = jellyfinService.getSubtitleStreams(from: item)
-        if !subtitlesFromItem.isEmpty {
-            availableSubtitles = subtitlesFromItem
-            isLoadingSubtitles = false
-            print("Subtitles from item: \(availableSubtitles.map { $0.subtitleDisplayName })")
-        } else {
-            // Fetch full item details from server to get MediaStreams
-            print("No subtitles in item, fetching from server...")
-            jellyfinService.getItemDetails(itemId: itemId) { [weak self] detailedItem in
-                guard let self = self else { return }
-                if let detailedItem = detailedItem {
-                    // Extract subtitles directly from the item to avoid actor isolation issues
-                    if let mediaSource = detailedItem.MediaSources?.first,
-                       let streams = mediaSource.MediaStreams {
-                        self.availableSubtitles = streams.filter { $0.StreamType == "Subtitle" }
-                    }
-                    self.currentMediaSourceId = detailedItem.MediaSources?.first?.Id
-                    print("Subtitles from server: \(self.availableSubtitles.map { $0.subtitleDisplayName })")
-                    
-                    // Auto-enable default subtitle if available
-                    if let defaultSub = self.availableSubtitles.first(where: { $0.IsDefault == true }) {
-                        self.selectSubtitle(index: defaultSub.Index, itemId: itemId, jellyfinService: jellyfinService)
+        loadPlayer(itemId: itemId, resumePosition: resumePosition, jellyfinService: jellyfinService)
+    }
+    
+    private func loadPlayer(itemId: String, resumePosition: Double, jellyfinService: JellyfinService) {
+        guard let streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: selectedQuality.bitrate) else {
+            self.errorMessage = "Could not generate stream URL"
+            return
+        }
+        
+        print("Loading player with profile: \(currentProfile)")
+        
+        // Start loading subtitles (only on first load ideally, but harmless to re-check)
+        if availableSubtitles.isEmpty {
+           loadSubtitles(jellyfinService: jellyfinService, itemId: itemId, item: currentItem)
+        }
+        
+        let playerItem = AVPlayerItem(url: streamURL)
+        
+        // Observe status for errors
+        statusObserver = playerItem.observe(\.status, options: [.new, .old]) { [weak self] item, _ in
+            guard let self = self else { return }
+            
+            switch item.status {
+            case .failed:
+                let error = item.error
+                print("Player item failed: \(String(describing: error))")
+                
+                // Smart Fallback Logic
+                if self.currentProfile == .high {
+                    print("Smart Fallback: high profile failed, switching to compatible...")
+                    DispatchQueue.main.async {
+                        self.retryWithCompatibleProfile(jellyfinService: jellyfinService, resumePosition: self.currentTime > 0 ? self.currentTime : resumePosition)
                     }
                 } else {
-                    print("Failed to fetch item details for subtitles")
+                    // Compatible also failed, show error
+                    DispatchQueue.main.async {
+                        self.isRetrying = false
+                        self.errorMessage = error?.localizedDescription ?? "Playback failed"
+                        self.player = nil
+                    }
                 }
-                self.isLoadingSubtitles = false
+                
+            case .readyToPlay:
+                DispatchQueue.main.async {
+                    self.errorMessage = nil
+                    self.isRetrying = false
+                }
+            default:
+                break
             }
         }
         
-        let playerItem = AVPlayerItem(url: url)
-        player = AVPlayer(playerItem: playerItem)
+        // Notification for "Safe" failure (NewErrorLogEntry) - sometimes .failed isn't triggered immediately for network format errors
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemNewErrorLogEntry, object: playerItem, queue: .main) { [weak self] notification in
+            guard let self = self, let object = notification.object as? AVPlayerItem, object == self.player?.currentItem else { return }
+            guard let log = object.errorLog(), let lastEvent = log.events.last else { return }
+            
+            print("AVPlayer Error Log: \(lastEvent.errorComment ?? "Unknown")")
+            
+            // If we are seeing errors, and haven't failed hard yet, consider fallback if it stalls.
+            // But strict failure is safer to trigger on. We'll rely on status .failed for now.
+        }
+        
+        if player == nil {
+            player = AVPlayer(playerItem: playerItem)
+        } else {
+            player?.replaceCurrentItem(with: playerItem)
+        }
         
         // Disable automatic media selection to allow manual subtitle control
         player?.appliesMediaSelectionCriteriaAutomatically = false
@@ -788,12 +857,27 @@ class JellyfinPlayerViewModel: ObservableObject {
         progressReportTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.player else { return }
             let positionTicks = Int64(CMTimeGetSeconds(player.currentTime()) * 10_000_000)
-            jellyfinService.reportPlaybackProgress(itemId: itemId, positionTicks: positionTicks, isPaused: !self.isPlaying)
+            let isPaused = !self.isPlaying
+            
+            Task { @MainActor in
+               jellyfinService.reportPlaybackProgress(itemId: itemId, positionTicks: positionTicks, isPaused: isPaused)
+            }
         }
         
         player?.play()
         isPlaying = true
         resetControlTimer()
+        
+        configureAudioSession()
+    }
+    
+    private func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to configure audio session: \(error)")
+        }
     }
     
     func changeQuality(to quality: VideoQuality, jellyfinService: JellyfinService) {
@@ -805,7 +889,7 @@ class JellyfinPlayerViewModel: ObservableObject {
         // Stop current player but keep state
         player?.pause()
         
-        guard let streamURL = jellyfinService.getStreamURL(itemId: itemId, maxBitrate: quality.bitrate) else {
+        guard let streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: quality.bitrate) else {
             return
         }
         
@@ -955,6 +1039,7 @@ class JellyfinPlayerViewModel: ObservableObject {
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
         }
+        statusObserver = nil
         progressReportTimer?.invalidate()
         controlTimer?.invalidate()
         player?.pause()
@@ -985,6 +1070,49 @@ class JellyfinPlayerViewModel: ObservableObject {
             windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
         } else {
             UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func retryWithCompatibleProfile(jellyfinService: JellyfinService, resumePosition: Double) {
+        isRetrying = true
+        currentProfile = .compatible
+        
+        if let itemId = currentItemId {
+             loadPlayer(itemId: itemId, resumePosition: resumePosition, jellyfinService: jellyfinService)
+        }
+    }
+
+    private func loadSubtitles(jellyfinService: JellyfinService, itemId: String, item: JellyfinItem?) {
+        guard let item = item else { return }
+        
+        isLoadingSubtitles = true
+        
+        // Try to load subtitles from the passed item first
+        let subtitlesFromItem = jellyfinService.getSubtitleStreams(from: item)
+        if !subtitlesFromItem.isEmpty {
+            self.availableSubtitles = subtitlesFromItem
+            self.isLoadingSubtitles = false
+            print("Subtitles from item: \(subtitlesFromItem.map { $0.subtitleDisplayName })")
+        } else {
+            // Fetch full item details
+            jellyfinService.getItemDetails(itemId: itemId) { [weak self] detailedItem in
+                guard let self = self else { return }
+                
+                Task { @MainActor in
+                    if let detailedItem = detailedItem {
+                        if let mediaSource = detailedItem.MediaSources?.first,
+                           let streams = mediaSource.MediaStreams {
+                            self.availableSubtitles = streams.filter { $0.StreamType == "Subtitle" }
+                        }
+                        if let defaultSub = self.availableSubtitles.first(where: { $0.IsDefault == true }) {
+                            self.selectSubtitle(index: defaultSub.Index, itemId: itemId, jellyfinService: jellyfinService)
+                        }
+                    }
+                    self.isLoadingSubtitles = false
+                }
+            }
         }
     }
 }
