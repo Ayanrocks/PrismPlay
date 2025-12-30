@@ -2,6 +2,7 @@ import SwiftUI
 
 enum AppTab: Int, Hashable {
     case home
+    case search
     case localFiles
     case servers
 }
@@ -9,6 +10,7 @@ enum AppTab: Int, Hashable {
 struct ContentView: View {
     @State private var selectedTab: AppTab = .home
     @State private var homeNavigationPath = NavigationPath()
+    @State private var searchNavigationPath = NavigationPath()
     @State private var localFilesNavigationPath = NavigationPath()
     @State private var serversNavigationPath = NavigationPath()
     
@@ -32,6 +34,14 @@ struct ContentView: View {
                 Label("Home", systemImage: "house.fill")
             }
             .tag(AppTab.home)
+            
+            NavigationStack(path: $searchNavigationPath) {
+                SearchView()
+            }
+            .tabItem {
+                Label("Search", systemImage: "magnifyingglass")
+            }
+            .tag(AppTab.search)
             
             NavigationStack(path: $localFilesNavigationPath) {
                 LocalFilesView()
@@ -63,6 +73,8 @@ struct ContentView: View {
                     switch newTab {
                     case .home:
                         homeNavigationPath = NavigationPath()
+                    case .search:
+                        searchNavigationPath = NavigationPath()
                     case .localFiles:
                         localFilesNavigationPath = NavigationPath()
                     case .servers:

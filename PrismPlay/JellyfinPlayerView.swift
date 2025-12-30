@@ -4,18 +4,22 @@ import MediaPlayer
 import Combine
 
 /// A video player view for Jellyfin content using AVPlayer with HLS streaming
-struct VideoQuality: Identifiable, Equatable {
+// MARK: - Video Quality
+struct VideoQuality: Identifiable, Equatable, Hashable {
     let id: String
     let name: String
-    let bitrate: Int? // nil for "Best" (max)
+    let bitrate: Int? // nil for "Original" (max/direct)
     
-    static let best = VideoQuality(id: "best", name: "Best (High Quality)", bitrate: nil)
-    static let p1080 = VideoQuality(id: "1080p", name: "1080p (10 Mbps)", bitrate: 10_000_000)
-    static let p720 = VideoQuality(id: "720p", name: "720p (4 Mbps)", bitrate: 4_000_000)
-    static let p480 = VideoQuality(id: "480p", name: "480p (1.5 Mbps)", bitrate: 1_500_000)
-    static let p360 = VideoQuality(id: "360p", name: "360p (0.7 Mbps)", bitrate: 700_000)
+    // Default preset
+    static let auto = VideoQuality(id: "auto", name: "Auto", bitrate: nil)
     
-    static let allCases = [best, p1080, p720, p480, p360]
+    // Standard presets for reference - we'll filter these based on source
+    static let p1080 = VideoQuality(id: "1080p", name: "1080p - 10 Mbps", bitrate: 10_000_000)
+    static let p720 = VideoQuality(id: "720p", name: "720p - 4 Mbps", bitrate: 4_000_000)
+    static let p480 = VideoQuality(id: "480p", name: "480p - 1.5 Mbps", bitrate: 1_500_000)
+    static let p360 = VideoQuality(id: "360p", name: "360p - 0.7 Mbps", bitrate: 700_000)
+    
+    static let allPresets = [p1080, p720, p480, p360]
 }
 
 // MARK: - Video Progress Bar with Buffer Indicator
@@ -565,7 +569,7 @@ struct JellyfinPlayerView: View {
                             
                             // Quality Menu (Settings)
                             Menu {
-                                ForEach(VideoQuality.allCases) { quality in
+                                ForEach(viewModel.availableQualities) { quality in
                                     Button(action: { viewModel.changeQuality(to: quality, jellyfinService: jellyfinService) }) {
                                         HStack {
                                             Text(quality.name)
@@ -670,6 +674,9 @@ struct JellyfinPlayerView: View {
             jellyfinService: jellyfinService,
             item: item
         )
+        
+        // Determine available qualities based on the item
+        viewModel.determineAvailableQualities(for: item)
     }
     
     private func toggleControls() {
@@ -785,7 +792,8 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var selectedSubtitleIndex: Int? = nil
     @Published var isLoadingSubtitles: Bool = false
     @Published var currentSubtitleText: String? = nil
-    @Published var selectedQuality: VideoQuality = .best
+    @Published var selectedQuality: VideoQuality = .auto
+    @Published var availableQualities: [VideoQuality] = []
     @Published var errorMessage: String? = nil
     @Published var isRetrying: Bool = false
     
@@ -1202,6 +1210,59 @@ class JellyfinPlayerViewModel: ObservableObject {
         player = nil
         
         resetOrientation()
+    }
+    
+    // MARK: - Quality Management
+    
+    func determineAvailableQualities(for item: JellyfinItem) {
+        // Defaults
+        var qualities: [VideoQuality] = []
+        
+        // Find the primary video stream to get source stats
+        var sourceBitrate: Int = Int.max
+        var sourceHeight: Int = 1080
+        var sourceName = "Original"
+        
+        if let mediaSource = item.MediaSources?.first,
+           let videoStream = mediaSource.MediaStreams?.first(where: { $0.StreamType == "Video" }) {
+            
+            // Use bitrate if available, otherwise assume high
+            sourceBitrate = videoStream.BitRate ?? 100_000_000
+            sourceHeight = videoStream.Height ?? 1080
+            
+            // Construct a nice name for Original
+            let resolution = videoStream.Height != nil ? "\(videoStream.Height!)p" : "Source"
+            let bitrate = videoStream.BitRate != nil ? "\(videoStream.BitRate! / 1_000_000) Mbps" : "Direct"
+            sourceName = "Original (\(resolution) - \(bitrate))"
+        }
+        
+        // Add Original/Auto option
+        let original = VideoQuality(id: "auto", name: sourceName, bitrate: nil)
+        qualities.append(original)
+        
+        // Filter presets
+        for preset in VideoQuality.allPresets {
+             if let presetBitrate = preset.bitrate {
+                 // Include if bitrate is significantly lower
+                 if presetBitrate < sourceBitrate {
+                     // Parse height from id "1080p" -> 1080
+                     let presetHeightStr = preset.id.replacingOccurrences(of: "p", with: "")
+                     let presetHeight = Int(presetHeightStr) ?? 0
+                     
+                     if presetHeight <= sourceHeight || presetHeight == 0 {
+                         qualities.append(preset)
+                     }
+                 }
+             }
+        }
+        
+        DispatchQueue.main.async {
+            self.availableQualities = qualities
+            // Ensure selected quality is valid, if not, reset to auto/original
+            if !qualities.contains(self.selectedQuality) {
+                self.selectedQuality = original
+            }
+        }
     }
     
     func toggleOrientation() {
