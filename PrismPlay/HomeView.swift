@@ -14,109 +14,122 @@ struct HomeView: View {
     @State private var resumeItems: [JellyfinItem] = []
     @State private var isLoading = false
     @State private var playingItem: JellyfinItem?
+    @State private var hasLoadedOnce = false
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                // Background
-                // Background
-                PrismBackground()
-                
-                if jellyfinService.savedServers.isEmpty {
-                    // No server configured
-                    VStack(spacing: 40) {
-                        Text("PrismPlay")
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .shadow(radius: 10)
-                            .padding(.top, 50)
-                        
-                        Spacer()
-                        
-                        GlassmorphicCard {
-                            VStack(spacing: 20) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 60))
-                                    .foregroundColor(.white)
-                                
-                                Text("No Server Configured")
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                                
-                                Button(action: {
-                                    showJellyfinLogin = true
-                                }) {
-                                    Text("Add Jellyfin Server")
-                                        .font(.headline)
-                                        .foregroundColor(.purple)
-                                        .padding()
-                                        .background(Color.white)
-                                        .cornerRadius(10)
-                                }
-                            }
-                            .padding(40)
-                        }
-                        .frame(maxWidth: 350)
-                        
-                        Spacer()
-                    }
-                } else {
-                    // Server configured - show libraries
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            // Header
-                            HStack {
-                                Text("PrismPlay")
-                                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white)
-                                
-                                Spacer()
-                                
-                                if let server = jellyfinService.savedServers.first {
-                                    Text(server.name)
-                                        .font(.caption)
-                                        .foregroundColor(.white.opacity(0.7))
-                                }
-                            }
-                            .padding()
-                            .padding(.top, 10)
+        ZStack {
+            // Background
+            PrismBackground()
+            
+            if jellyfinService.savedServers.isEmpty {
+                // No server configured
+                VStack(spacing: 40) {
+                    Text("PrismPlay")
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .shadow(radius: 10)
+                        .padding(.top, 50)
+                    
+                    Spacer()
+                    
+                    GlassmorphicCard {
+                        VStack(spacing: 20) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.white)
                             
-                            if isLoading {
-                                ProgressView("Loading libraries...")
-                                    .foregroundColor(.white)
+                            Text("No Server Configured")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                            
+                            Button(action: {
+                                showJellyfinLogin = true
+                            }) {
+                                Text("Add Jellyfin Server")
+                                    .font(.headline)
+                                    .foregroundColor(.purple)
                                     .padding()
-                            } else if librariesWithItems.isEmpty {
-                                Text("No libraries found")
+                                    .background(Color.white)
+                                    .cornerRadius(10)
+                            }
+                        }
+                        .padding(40)
+                    }
+                    .frame(maxWidth: 350)
+                    
+                    Spacer()
+                }
+            } else {
+                // Server configured - show libraries
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header with refresh button
+                        HStack {
+                            Text("PrismPlay")
+                                .font(.system(size: 36, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                            
+                            Spacer()
+                            
+                            // Manual refresh button
+                            Button(action: {
+                                loadLibraries()
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.title2)
+                                    .foregroundColor(.white.opacity(isLoading ? 0.5 : 1.0))
+                            }
+                            .disabled(isLoading)
+                            .padding(.trailing, 8)
+                            
+                            if let server = jellyfinService.savedServers.first {
+                                Text(server.name)
+                                    .font(.caption)
                                     .foregroundColor(.white.opacity(0.7))
-                                    .padding()
-                            } else {
-                                // Continue Watching Section (if any)
-                                if !resumeItems.isEmpty {
-                                    ContinueWatchingRowView(items: resumeItems, jellyfinService: jellyfinService, selectedItem: $playingItem)
-                                }
-                                
-                                // Library Rows
-                                ForEach(librariesWithItems) { libraryWithItems in
-                                    LibraryRowView(
-                                        library: libraryWithItems.library,
-                                        items: libraryWithItems.items,
-                                        jellyfinService: jellyfinService
-                                    )
-                                }
+                            }
+                        }
+                        .padding()
+                        .padding(.top, 10)
+                        
+                        if isLoading {
+                            ProgressView("Loading libraries...")
+                                .foregroundColor(.white)
+                                .padding()
+                        } else if librariesWithItems.isEmpty {
+                            Text("No libraries found")
+                                .foregroundColor(.white.opacity(0.7))
+                                .padding()
+                        } else {
+                            // Continue Watching Section (if any)
+                            if !resumeItems.isEmpty {
+                                ContinueWatchingRowView(items: resumeItems, jellyfinService: jellyfinService, selectedItem: $playingItem)
+                            }
+                            
+                            // Library Rows
+                            ForEach(librariesWithItems) { libraryWithItems in
+                                LibraryRowView(
+                                    library: libraryWithItems.library,
+                                    items: libraryWithItems.items,
+                                    jellyfinService: jellyfinService
+                                )
                             }
                         }
                     }
                 }
             }
-            .sheet(isPresented: $showJellyfinLogin) {
-                JellyfinLoginView(isPresented: $showJellyfinLogin)
-            }
-            .fullScreenCover(item: $playingItem) { item in
-                JellyfinPlayerView(item: item)
-            }
-            .onAppear {
+        }
+        .sheet(isPresented: $showJellyfinLogin) {
+            JellyfinLoginView(isPresented: $showJellyfinLogin)
+        }
+        .fullScreenCover(item: $playingItem) { item in
+            JellyfinPlayerView(item: item)
+        }
+        .onAppear {
+            // Only load on first appearance to prevent re-fetching on navigation return
+            if !hasLoadedOnce {
                 loadLibraries()
+                hasLoadedOnce = true
             }
         }
     }

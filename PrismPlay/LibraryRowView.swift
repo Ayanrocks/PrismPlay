@@ -57,8 +57,8 @@ struct LibraryRowView: View {
                                 Text(item.Name)
                                     .font(.caption)
                                     .foregroundColor(.white)
-                                    .lineLimit(nil)
-                                    .frame(width: 120)
+                                    .lineLimit(2)
+                                    .frame(width: 120, height: 36, alignment: .topLeading)
                                     .multilineTextAlignment(.leading)
                             }
                         }

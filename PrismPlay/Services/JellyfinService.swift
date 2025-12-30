@@ -165,7 +165,7 @@ class JellyfinService: ObservableObject {
         // Let's try getting recent items or just root library items first. 
         // A better query for "movies and shows" might be /Users/{UserId}/Items?Recursive=true&IncludeItemTypes=Movie,Series
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,LocationType,MediaSources"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -257,6 +257,75 @@ class JellyfinService: ObservableObject {
         return URL(string: urlString)
     }
     
+    // MARK: - Item Filtering
+    
+    /// Filters items to only include those with valid, playable media sources
+    /// Items are filtered out if:
+    /// - Their LocationType is "Virtual" or "Offline" (file doesn't exist)
+    /// - They have no MediaSources at all
+    /// - Their MediaSources have no valid MediaStreams (no video/audio tracks)
+    /// - Their MediaSources have no valid Path or Size
+    /// - They are Folder type (not Movie, Episode, or Series)
+    private func filterValidItems(_ items: [JellyfinItem]) -> [JellyfinItem] {
+        return items.filter { item in
+            // Only allow specific valid types - reject Folder and other unknown types
+            let validTypes = ["Movie", "Episode", "Series", "Season", "MusicAlbum", "Audio"]
+            if !validTypes.contains(item.ItemType) {
+                print("[Filter] Rejecting '\(item.Name)': ItemType '\(item.ItemType)' is not in valid types")
+                return false
+            }
+            
+            // For Movies and Episodes, require valid location and media source
+            if item.ItemType == "Movie" || item.ItemType == "Episode" {
+                
+                // First check LocationType - "Virtual" or "Offline" means file doesn't exist
+                if let locationType = item.LocationType {
+                    if locationType == "Virtual" || locationType == "Offline" {
+                        print("[Filter] Rejecting '\(item.Name)': LocationType is \(locationType)")
+                        return false
+                    }
+                }
+                
+                guard let mediaSource = item.MediaSources?.first else {
+                    print("[Filter] Rejecting '\(item.Name)': No MediaSources")
+                    return false
+                }
+                
+                // Check if there are valid MediaStreams with at least one video stream
+                if let streams = mediaSource.MediaStreams {
+                    let hasVideoStream = streams.contains { $0.StreamType == "Video" }
+                    if !hasVideoStream {
+                        print("[Filter] Rejecting '\(item.Name)': No video stream in MediaStreams")
+                        return false
+                    }
+                } else {
+                    print("[Filter] Rejecting '\(item.Name)': MediaStreams is nil")
+                    return false
+                }
+                
+                // Additional check: verify path exists and size > 0
+                if let path = mediaSource.Path, !path.isEmpty {
+                    if let size = mediaSource.Size, size > 0 {
+                        return true
+                    } else {
+                        print("[Filter] Rejecting '\(item.Name)': Size is 0 or nil")
+                        return false
+                    }
+                }
+                
+                // If IsRemote is true, it might be a streaming source without local path
+                if mediaSource.IsRemote == true {
+                    return true
+                }
+                
+                print("[Filter] Rejecting '\(item.Name)': No valid path")
+                return false
+            }
+            // For Series and other valid types, allow them through (they don't have MediaSources directly)
+            return true
+        }
+    }
+    
     func fetchLibraries(completion: @escaping @Sendable ([JellyfinLibrary]?) -> Void) {
         guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
             completion(nil)
@@ -303,11 +372,13 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks&SortBy=DateCreated&SortOrder=Descending"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,MediaSources,LocationType&SortBy=DateCreated&SortOrder=Descending"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
         }
+        
+        print("=== DEBUG: Fetching library items from: \(urlString) ===")
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -325,10 +396,37 @@ class JellyfinService: ObservableObject {
                 return
             }
             
+            // DEBUG: Print raw JSON for first few items
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("=== DEBUG: Raw API Response (first 5000 chars) ===")
+                print(String(jsonString.prefix(5000)))
+                print("=== END DEBUG ===")
+            }
+            
             DispatchQueue.main.async {
                 do {
                     let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
-                    completion(itemsResponse.Items)
+                    
+                    // DEBUG: Print details of first 5 items before filtering
+                    print("=== DEBUG: First 5 items BEFORE filtering ===")
+                    for (index, item) in itemsResponse.Items.prefix(5).enumerated() {
+                        print("[\(index)] Name: \(item.Name)")
+                        print("    LocationType: \(item.LocationType ?? "nil")")
+                        print("    MediaSources count: \(item.MediaSources?.count ?? 0)")
+                        if let ms = item.MediaSources?.first {
+                            print("    MediaSource.Path: \(ms.Path ?? "nil")")
+                            print("    MediaSource.Size: \(ms.Size ?? 0)")
+                            print("    MediaSource.IsRemote: \(ms.IsRemote ?? false)")
+                            print("    MediaStreams count: \(ms.MediaStreams?.count ?? 0)")
+                        }
+                    }
+                    print("=== END DEBUG ===")
+                    
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    
+                    print("=== DEBUG: Items after filtering: \(validItems.count) (was \(itemsResponse.Items.count)) ===")
+                    
+                    completion(validItems)
                 } catch {
                     print("Error decoding library items: \(error)")
                     completion(nil)
@@ -350,7 +448,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,MediaSources,LocationType&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -375,7 +473,8 @@ class JellyfinService: ObservableObject {
             DispatchQueue.main.async {
                 do {
                     let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
-                    completion(itemsResponse.Items)
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    completion(validItems)
                 } catch {
                     print("Error decoding library items: \(error)")
                     completion(nil)
@@ -389,7 +488,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?PersonIds=\(personId)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear&SortBy=DateCreated&SortOrder=Descending"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?PersonIds=\(personId)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear,LocationType,MediaSources&SortBy=DateCreated&SortOrder=Descending"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -410,7 +509,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items?Genres=\(encodedGenre)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear&SortBy=DateCreated&SortOrder=Descending"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?Genres=\(encodedGenre)&Limit=\(limit)&Recursive=true&IncludeItemTypes=Movie,Series&Fields=PrimaryImageAspectRatio,SortName,DateCreated,ProductionYear,LocationType,MediaSources&SortBy=DateCreated&SortOrder=Descending"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -441,7 +540,7 @@ class JellyfinService: ObservableObject {
         }
         
         // Fetch episodes for a specific season
-        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(seasonId)&IncludeItemTypes=Episode&SortBy=SortName,IndexNumber&Fields=PrimaryImageAspectRatio,Overview,IndexNumber,ParentIndexNumber,MediaSources,RunTimeTicks"
+        let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(seasonId)&IncludeItemTypes=Episode&SortBy=SortName,IndexNumber&Fields=PrimaryImageAspectRatio,Overview,IndexNumber,ParentIndexNumber,MediaSources,RunTimeTicks,LocationType"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -470,7 +569,8 @@ class JellyfinService: ObservableObject {
             DispatchQueue.main.async {
                 do {
                     let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
-                    completion(itemsResponse.Items)
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    completion(validItems)
                 } catch {
                     print("Error decoding items: \(error)")
                     completion(nil)
@@ -566,7 +666,7 @@ class JellyfinService: ObservableObject {
             return
         }
         
-        let urlString = "\(serverURL)/Users/\(userId)/Items/Resume?Limit=\(limit)&Fields=PrimaryImageAspectRatio,Overview,MediaSources,RunTimeTicks,UserData,SeriesName,SeriesId&EnableImageTypes=Primary,Backdrop,Thumb"
+        let urlString = "\(serverURL)/Users/\(userId)/Items/Resume?Limit=\(limit)&Fields=PrimaryImageAspectRatio,Overview,MediaSources,RunTimeTicks,UserData,SeriesName,SeriesId,LocationType&EnableImageTypes=Primary,Backdrop,Thumb"
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
