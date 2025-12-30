@@ -57,6 +57,11 @@ enum AspectRatioOption: String, CaseIterable {
     case sixteenNine = "16:9"
     case fourThree = "4:3"
     
+    /// Display name for the UI
+    var displayName: String {
+        return rawValue
+    }
+    
     /// The AVLayerVideoGravity value for this option
     var videoGravity: AVLayerVideoGravity {
         switch self {

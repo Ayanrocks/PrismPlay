@@ -2,6 +2,40 @@ import Foundation
 import Combine
 import SwiftUI
 
+enum PlaybackProfile {
+    case direct     // Direct stream for native iOS formats (HEVC/H.264)
+    case high       // HLS with HEVC, remux if possible
+    case compatible // Force safe: H264/AAC, Transcode
+    
+    var videoCodec: String {
+        switch self {
+        case .direct: return ""  // Not used for direct stream
+        case .high: return "hevc,h264"  // Prefer HEVC first
+        case .compatible: return "h264"
+        }
+    }
+    
+    var audioCodec: String {
+        switch self {
+        case .direct: return ""  // Not used for direct stream
+        case .high: return "aac,ac3,eac3,mp3"
+        case .compatible: return "aac"
+        }
+    }
+    
+    var segmentContainer: String {
+        switch self {
+        case .direct: return ""  // Not used for direct stream
+        case .high: return "mp4"  // fMP4 works better for HEVC on iOS
+        case .compatible: return "ts"
+        }
+    }
+    
+    var transcodingProtocol: String {
+        return "hls"
+    }
+}
+
 @MainActor
 class JellyfinService: ObservableObject {
     static let shared = JellyfinService()
@@ -447,35 +481,7 @@ class JellyfinService: ObservableObject {
     
     // MARK: - Streaming URL
     
-    enum PlaybackProfile {
-        case high       // Try max quality: HEVC, Copy if possible
-        case compatible // Force safe: H264/AAC, Transcode
-        
-        var videoCodec: String {
-            switch self {
-            case .high: return "h264,hevc"
-            case .compatible: return "h264"
-            }
-        }
-        
-        var audioCodec: String {
-            switch self {
-            case .high: return "aac,mp3,ac3,eac3"
-            case .compatible: return "aac"
-            }
-        }
-        
-        var segmentContainer: String {
-            switch self {
-            case .high: return "ts" // kept as ts for safety vs fMP4 issues
-            case .compatible: return "ts"
-            }
-        }
-        
-        var transcodingProtocol: String {
-             return "hls"
-        }
-    }
+
     
     /// Constructs a streaming URL using HLS transcoding for universal iOS compatibility
     func getStreamURL(itemId: String, profile: PlaybackProfile = .high, maxBitrate: Int? = nil) -> URL? {
@@ -509,11 +515,13 @@ class JellyfinService: ObservableObject {
         return components?.url
     }
     
-    /// Constructs a direct stream URL (only for iOS-native formats like MP4/H.264)
+    /// Constructs a direct stream URL for native iOS formats (HEVC/H.264)
+    /// This avoids transcoding and streams the file directly
     func getDirectStreamURL(itemId: String) -> URL? {
         guard !serverURL.isEmpty, !accessToken.isEmpty else { return nil }
         
-        let urlString = "\(serverURL)/Videos/\(itemId)/stream?static=true&api_key=\(accessToken)"
+        // Use stream.mp4 for better iOS HEVC compatibility
+        let urlString = "\(serverURL)/Videos/\(itemId)/stream.mp4?static=true&api_key=\(accessToken)"
         return URL(string: urlString)
     }
     

@@ -407,159 +407,162 @@ struct JellyfinPlayerView: View {
     // MARK: - Controls Overlay
     
     private func controlsOverlay(geometry: GeometryProxy) -> some View {
-        VStack(spacing: 0) {
-            // Top Bar - positioned at safe area top
-            HStack {
-                Button(action: {
-                    viewModel.resetOrientation()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        dismiss()
-                    }
-                }) {
-                    PrismIcon.close.image
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Circle())
-                }
-                
-                Spacer()
-                
-                VStack(spacing: 2) {
-                    Text(item.Name)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    
-                    if let seriesName = item.SeriesName {
-                        Text(seriesName)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-                    }
-                }
-                
-                Spacer()
-                
-                // Aspect Ratio Button
-                Button(action: {
-                    _ = settings.cycleAspectRatio()
-                }) {
-                    Image(systemName: settings.currentAspectRatio.iconName)
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Circle())
-                }
-                
-                // Subtitle Button
-                Button(action: {
-                    showSubtitlePicker = true
-                }) {
-                    Image(systemName: viewModel.selectedSubtitleIndex != nil ? "captions.bubble.fill" : "captions.bubble")
-                        .foregroundColor(viewModel.selectedSubtitleIndex != nil ? .purple : .white)
-                        .font(.title2)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Circle())
-                }
-                
-                Button(action: {
-                    viewModel.toggleOrientation()
-                }) {
-                    PrismIcon.rotateScreen.image
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Circle())
-                }
-                
-                // Quality Button
-                Menu {
-                    ForEach(VideoQuality.allCases) { quality in
+        GeometryReader { _ in
+            ZStack {
+                // Top Bar
+                VStack {
+                    HStack(spacing: 12) {
+                        // Close button
                         Button(action: {
-                            viewModel.changeQuality(to: quality, jellyfinService: jellyfinService)
+                            viewModel.resetOrientation()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                dismiss()
+                            }
                         }) {
-                            HStack {
-                                Text(quality.name)
-                                if viewModel.selectedQuality == quality {
-                                    Image(systemName: "checkmark")
+                            PrismIcon.close.image
+                                .foregroundColor(.white)
+                                .font(.title2)
+                                .padding(12)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                        }
+                        
+                        Spacer()
+                        
+                        // Title
+                        VStack(spacing: 2) {
+                            Text(item.Name)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            
+                            if let seriesName = item.SeriesName {
+                                Text(seriesName)
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        // Quick Access Buttons
+                        HStack(spacing: 8) {
+                            // Aspect Ratio
+                            Button(action: { _ = settings.cycleAspectRatio() }) {
+                                Image(systemName: settings.currentAspectRatio.iconName)
+                                    .foregroundColor(.white)
+                                    .font(.title3)
+                                    .padding(10)
+                                    .background(Color.black.opacity(0.5))
+                                    .clipShape(Circle())
+                            }
+                            
+                            // Subtitles
+                            Button(action: { showSubtitlePicker = true }) {
+                                Image(systemName: viewModel.selectedSubtitleIndex != nil ? "captions.bubble.fill" : "captions.bubble")
+                                    .foregroundColor(.white)
+                                    .font(.title3)
+                                    .padding(10)
+                                    .background(Color.black.opacity(0.5))
+                                    .clipShape(Circle())
+                            }
+                            
+                            // Rotate Screen
+                            Button(action: { viewModel.toggleOrientation() }) {
+                                Image(systemName: "rotate.right")
+                                    .foregroundColor(.white)
+                                    .font(.title3)
+                                    .padding(10)
+                                    .background(Color.black.opacity(0.5))
+                                    .clipShape(Circle())
+                            }
+                            
+                            // Quality Menu (Settings)
+                            Menu {
+                                ForEach(VideoQuality.allCases) { quality in
+                                    Button(action: { viewModel.changeQuality(to: quality, jellyfinService: jellyfinService) }) {
+                                        HStack {
+                                            Text(quality.name)
+                                            if viewModel.selectedQuality == quality {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
                                 }
+                            } label: {
+                                Image(systemName: "gearshape.fill")
+                                    .foregroundColor(.white)
+                                    .font(.title3)
+                                    .padding(10)
+                                    .background(Color.black.opacity(0.5))
+                                    .clipShape(Circle())
                             }
                         }
                     }
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5))
-                        .clipShape(Circle())
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, geometry.safeAreaInsets.top > 0 ? geometry.safeAreaInsets.top : 16)
-            
-            Spacer()
-            
-            // Center Controls
-            HStack(spacing: 50) {
-                Button(action: { viewModel.seekRelative(by: -settings.skipButtonSeconds) }) {
-                    PrismIcon.seekBackward.image
-                        .font(.system(size: 30))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
+                    .padding(.horizontal, 16)
+                    .padding(.top, geometry.safeAreaInsets.top > 0 ? geometry.safeAreaInsets.top : 16)
+                    
+                    Spacer()
                 }
                 
-                Button(action: { viewModel.togglePlayPause(itemId: item.Id, jellyfinService: jellyfinService) }) {
-                    (viewModel.isPlaying ? PrismIcon.pause.image : PrismIcon.play.image)
-                        .font(.system(size: 70))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
+                // Center Controls
+                HStack(spacing: 50) {
+                    Button(action: { viewModel.seekRelative(by: -settings.skipButtonSeconds) }) {
+                        PrismIcon.seekBackward.image
+                            .font(.system(size: 30))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
+                    
+                    Button(action: { viewModel.togglePlayPause(itemId: item.Id, jellyfinService: jellyfinService) }) {
+                        (viewModel.isPlaying ? PrismIcon.pause.image : PrismIcon.play.image)
+                            .font(.system(size: 70))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
+                    
+                    Button(action: { viewModel.seekRelative(by: settings.skipButtonSeconds) }) {
+                        PrismIcon.seekForward.image
+                            .font(.system(size: 30))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
                 }
                 
-                Button(action: { viewModel.seekRelative(by: settings.skipButtonSeconds) }) {
-                    PrismIcon.seekForward.image
-                        .font(.system(size: 30))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
+                // Bottom Bar
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        Text(formatTime(viewModel.safeCurrentTime))
+                            .font(.caption)
+                            .foregroundColor(.white)
+                        
+                        Slider(value: Binding(
+                            get: { viewModel.safeCurrentTime },
+                            set: { viewModel.safeCurrentTime = $0 }
+                        ), in: 0...viewModel.safeDuration, onEditingChanged: { editing in
+                            viewModel.isSeeking = editing
+                            if !editing {
+                                viewModel.seek(to: viewModel.safeCurrentTime)
+                            }
+                        })
+                        .accentColor(.purple)
+                        
+                        Text(formatTime(viewModel.safeDuration))
+                            .font(.caption)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom)
+                    .background(
+                        LinearGradient(gradient: Gradient(colors: [.clear, .black.opacity(0.8)]), startPoint: .top, endPoint: .bottom)
+                    )
                 }
             }
-            
-            Spacer()
-            
-            // Bottom Controls
-            VStack(spacing: 0) {
-                HStack {
-                    Text(formatTime(viewModel.safeCurrentTime))
-                        .font(.caption)
-                        .foregroundColor(.white)
-                    
-                    Slider(value: Binding(
-                        get: { viewModel.safeCurrentTime },
-                        set: { viewModel.safeCurrentTime = $0 }
-                    ), in: 0...viewModel.safeDuration, onEditingChanged: { editing in
-                        viewModel.isSeeking = editing
-                        if !editing {
-                            viewModel.seek(to: viewModel.safeCurrentTime)
-                        }
-                    })
-                    .accentColor(.purple)
-                    
-                    Text(formatTime(viewModel.safeDuration))
-                        .font(.caption)
-                        .foregroundColor(.white)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .background(
-                LinearGradient(gradient: Gradient(colors: [.clear, .black.opacity(0.8)]), startPoint: .top, endPoint: .bottom)
-            )
-            .padding(.bottom, geometry.safeAreaInsets.bottom)
         }
+        .edgesIgnoringSafeArea(.all)
         .transition(.opacity)
     }
     
@@ -694,7 +697,10 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var isRetrying: Bool = false
     
-    private var currentProfile: JellyfinService.PlaybackProfile = .high
+    // (Caching disabled - using standard streaming)
+    @Published var cachedRanges: [ClosedRange<Double>] = []
+    
+    private var currentProfile: PlaybackProfile = .high
     private var subtitleCues: [SubtitleCue] = []
     
     private var timeObserver: Any?
@@ -735,28 +741,41 @@ class JellyfinPlayerViewModel: ObservableObject {
         self.currentItem = item
         self.currentMediaSourceId = item.MediaSources?.first?.Id
         
-        // Initial setup with high profile if no URL is manually provided (legacy support)
-        // If it's a retry, we might be calling internalSetup directly, but this is the public entry point
-        // So reset to high profile on fresh start
-        self.currentProfile = .high
+        // Start with direct streaming for best quality (native HEVC/H.264)
+        // Fallback cascade: direct → high (HLS HEVC) → compatible (H.264 transcode)
+        self.currentProfile = .direct
         
         loadPlayer(itemId: itemId, resumePosition: resumePosition, jellyfinService: jellyfinService)
     }
     
     private func loadPlayer(itemId: String, resumePosition: Double, jellyfinService: JellyfinService) {
-        guard let streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: selectedQuality.bitrate) else {
+        // Get URL based on current profile
+        let streamURL: URL?
+        
+        if currentProfile == .direct {
+            // Direct stream for native HEVC/H.264 - no transcoding
+            streamURL = jellyfinService.getDirectStreamURL(itemId: itemId)
+        } else {
+            // HLS transcoding with profile settings
+            streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: selectedQuality.bitrate)
+        }
+        
+        guard let url = streamURL else {
             self.errorMessage = "Could not generate stream URL"
             return
         }
         
-        print("Loading player with profile: \(currentProfile)")
+        print("Loading player with profile: \(currentProfile), URL: \(url)")
         
         // Start loading subtitles (only on first load ideally, but harmless to re-check)
         if availableSubtitles.isEmpty {
            loadSubtitles(jellyfinService: jellyfinService, itemId: itemId, item: currentItem)
         }
         
-        let playerItem = AVPlayerItem(url: streamURL)
+        // Use standard AVURLAsset (caching disabled due to HLS incompatibility)
+        let playerItem = AVPlayerItem(url: url)
+        
+        // --- End Player Setup ---
         
         // Observe status for errors
         statusObserver = playerItem.observe(\.status, options: [.new, .old]) { [weak self] item, _ in
@@ -767,11 +786,16 @@ class JellyfinPlayerViewModel: ObservableObject {
                 let error = item.error
                 print("Player item failed: \(String(describing: error))")
                 
-                // Smart Fallback Logic
-                if self.currentProfile == .high {
-                    print("Smart Fallback: high profile failed, switching to compatible...")
+                // Smart Fallback Logic: direct → high → compatible
+                if self.currentProfile == .direct {
+                    print("Smart Fallback: direct stream failed, trying HLS HEVC...")
                     DispatchQueue.main.async {
-                        self.retryWithCompatibleProfile(jellyfinService: jellyfinService, resumePosition: self.currentTime > 0 ? self.currentTime : resumePosition)
+                        self.retryWithProfile(.high, jellyfinService: jellyfinService, resumePosition: self.currentTime > 0 ? self.currentTime : resumePosition)
+                    }
+                } else if self.currentProfile == .high {
+                    print("Smart Fallback: HLS HEVC failed, trying H.264 compatible...")
+                    DispatchQueue.main.async {
+                        self.retryWithProfile(.compatible, jellyfinService: jellyfinService, resumePosition: self.currentTime > 0 ? self.currentTime : resumePosition)
                     }
                 } else {
                     // Compatible also failed, show error
@@ -1039,6 +1063,9 @@ class JellyfinPlayerViewModel: ObservableObject {
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
         }
+        
+
+        
         statusObserver = nil
         progressReportTimer?.invalidate()
         controlTimer?.invalidate()
@@ -1075,12 +1102,12 @@ class JellyfinPlayerViewModel: ObservableObject {
     
     // MARK: - Helper Methods
     
-    private func retryWithCompatibleProfile(jellyfinService: JellyfinService, resumePosition: Double) {
+    private func retryWithProfile(_ profile: PlaybackProfile, jellyfinService: JellyfinService, resumePosition: Double) {
         isRetrying = true
-        currentProfile = .compatible
+        currentProfile = profile
         
         if let itemId = currentItemId {
-             loadPlayer(itemId: itemId, resumePosition: resumePosition, jellyfinService: jellyfinService)
+            loadPlayer(itemId: itemId, resumePosition: resumePosition, jellyfinService: jellyfinService)
         }
     }
 
