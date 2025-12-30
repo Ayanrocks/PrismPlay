@@ -18,6 +18,92 @@ struct VideoQuality: Identifiable, Equatable {
     static let allCases = [best, p1080, p720, p480, p360]
 }
 
+// MARK: - Video Progress Bar with Buffer Indicator
+
+/// A custom progress bar that shows buffered content as a grey bar behind the playback progress
+struct VideoProgressBar: View {
+    @Binding var currentTime: Double
+    let duration: Double
+    let bufferedRanges: [(start: Double, end: Double)]
+    let onEditingChanged: (Bool) -> Void
+    
+    @State private var isDragging = false
+    @State private var dragValue: Double = 0
+    
+    private let trackHeight: CGFloat = 4
+    private let thumbSize: CGFloat = 14
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let safeDuration = duration > 0 ? duration : 1
+            let centerY = geometry.size.height / 2
+            
+            ZStack {
+                // Background track (dark grey)
+                Capsule()
+                    .fill(Color.white.opacity(0.3))
+                    .frame(width: width, height: trackHeight)
+                    .position(x: width / 2, y: centerY)
+                
+                // Buffer indicator (light grey/white) - shows loaded content
+                ForEach(Array(bufferedRanges.enumerated()), id: \.offset) { _, range in
+                    let startFraction = max(0, min(range.start / safeDuration, 1))
+                    let endFraction = max(0, min(range.end / safeDuration, 1))
+                    let rangeWidth = (endFraction - startFraction) * width
+                    let centerX = (startFraction * width) + (rangeWidth / 2)
+                    
+                    if rangeWidth > 0 {
+                        Capsule()
+                            .fill(Color.white.opacity(0.6))
+                            .frame(width: rangeWidth, height: trackHeight)
+                            .position(x: centerX, y: centerY)
+                    }
+                }
+                
+                // Progress indicator (purple)
+                let progressFraction = max(0, min((isDragging ? dragValue : currentTime) / safeDuration, 1))
+                let progressWidth = progressFraction * width
+                
+                if progressWidth > 0 {
+                    Capsule()
+                        .fill(Color.purple)
+                        .frame(width: progressWidth, height: trackHeight)
+                        .position(x: progressWidth / 2, y: centerY)
+                }
+                
+                // Thumb/scrubber
+                Circle()
+                    .fill(Color.purple)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .shadow(color: .black.opacity(0.3), radius: 2)
+                    .position(x: progressFraction * width, y: centerY)
+                    .scaleEffect(isDragging ? 1.3 : 1.0)
+                    .animation(.easeInOut(duration: 0.1), value: isDragging)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !isDragging {
+                            isDragging = true
+                            onEditingChanged(true)
+                        }
+                        
+                        let fraction = max(0, min(value.location.x / width, 1))
+                        dragValue = fraction * safeDuration
+                        currentTime = dragValue
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+    }
+}
+
+
 struct JellyfinPlayerView: View {
     let item: JellyfinItem
     @StateObject private var viewModel = JellyfinPlayerViewModel()
@@ -538,16 +624,22 @@ struct JellyfinPlayerView: View {
                             .font(.caption)
                             .foregroundColor(.white)
                         
-                        Slider(value: Binding(
-                            get: { viewModel.safeCurrentTime },
-                            set: { viewModel.safeCurrentTime = $0 }
-                        ), in: 0...viewModel.safeDuration, onEditingChanged: { editing in
-                            viewModel.isSeeking = editing
-                            if !editing {
-                                viewModel.seek(to: viewModel.safeCurrentTime)
+                        VideoProgressBar(
+                            currentTime: Binding(
+                                get: { viewModel.safeCurrentTime },
+                                set: { viewModel.safeCurrentTime = $0 }
+                            ),
+                            duration: viewModel.safeDuration,
+                            bufferedRanges: viewModel.bufferedRanges,
+                            onEditingChanged: { editing in
+                                viewModel.isSeeking = editing
+                                if !editing {
+                                    viewModel.seek(to: viewModel.safeCurrentTime)
+                                }
                             }
-                        })
-                        .accentColor(.purple)
+                        )
+                        .frame(height: 30) // Touch target area
+
                         
                         Text(formatTime(viewModel.safeDuration))
                             .font(.caption)
@@ -697,8 +789,8 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var isRetrying: Bool = false
     
-    // (Caching disabled - using standard streaming)
-    @Published var cachedRanges: [ClosedRange<Double>] = []
+    // Buffer indicator - tracks loaded time ranges from AVPlayer
+    @Published var bufferedRanges: [(start: Double, end: Double)] = []
     
     private var currentProfile: PlaybackProfile = .high
     private var subtitleCues: [SubtitleCue] = []
@@ -710,6 +802,10 @@ class JellyfinPlayerViewModel: ObservableObject {
     private var currentItemId: String?
     private var currentMediaSourceId: String?
     private var currentItem: JellyfinItem? // Keep reference for retries
+    
+    // HLS Cache integration
+    private let hlsCacheController = HLSCacheController.shared
+    private var cacheSubscription: AnyCancellable?
     
     /// Safe duration value that's never NaN, negative, or zero
     
@@ -774,6 +870,18 @@ class JellyfinPlayerViewModel: ObservableObject {
         
         // Use standard AVURLAsset (caching disabled due to HLS incompatibility)
         let playerItem = AVPlayerItem(url: url)
+        
+        // Start HLS caching for non-direct streams
+        if currentProfile != .direct {
+            hlsCacheController.startCaching(for: url)
+            
+            // Subscribe to cache ranges updates
+            cacheSubscription = hlsCacheController.$cachedRanges
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] ranges in
+                    self?.bufferedRanges = ranges.map { (start: $0.lowerBound, end: $0.upperBound) }
+                }
+        }
         
         // --- End Player Setup ---
         
@@ -867,6 +975,24 @@ class JellyfinPlayerViewModel: ObservableObject {
                 let dur = CMTimeGetSeconds(currentItem.duration)
                 if !dur.isNaN && dur > 0 {
                     self.duration = dur
+                }
+                
+                // Always update buffered ranges from AVPlayer for buffer indicator
+                // This shows what AVPlayer has loaded in memory (works for all stream types)
+                let loadedRanges = currentItem.loadedTimeRanges.compactMap { value -> (start: Double, end: Double)? in
+                    let range = value.timeRangeValue
+                    let start = CMTimeGetSeconds(range.start)
+                    let end = start + CMTimeGetSeconds(range.duration)
+                    guard !start.isNaN && !end.isNaN && end > start else { return nil }
+                    return (start: start, end: end)
+                }
+                
+                // Update buffer ranges for display
+                self.bufferedRanges = loadedRanges
+                
+                // Also update HLS cache controller for actual segment caching (HLS streams only)
+                if self.currentProfile != .direct {
+                    self.hlsCacheController.updatePlaybackTime(self.currentTime)
                 }
             }
         }
@@ -1064,7 +1190,10 @@ class JellyfinPlayerViewModel: ObservableObject {
             player?.removeTimeObserver(timeObserver)
         }
         
-
+        // Stop and clear HLS cache
+        cacheSubscription?.cancel()
+        cacheSubscription = nil
+        hlsCacheController.stop()
         
         statusObserver = nil
         progressReportTimer?.invalidate()

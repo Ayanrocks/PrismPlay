@@ -8,9 +8,9 @@ class HLSCacheController: NSObject, ObservableObject, URLSessionDelegate {
     private var segmentCache: [String: TimeInterval] = [:] // Map URL to duration
     private var segments: [HLSSegment] = []
     
-    // Configuration
-    private let lookaheadDuration: TimeInterval = 15 * 60 // 15 minutes
-    private let cleanupThreshold: TimeInterval = 10 * 60 // 10 minutes
+    // Configuration - cache next 10 mins, keep previous 5 mins
+    private let lookaheadDuration: TimeInterval = 10 * 60 // 10 minutes ahead
+    private let cleanupThreshold: TimeInterval = 5 * 60 // 5 minutes behind
     
     @Published var cachedRanges: [ClosedRange<Double>] = [] 
     

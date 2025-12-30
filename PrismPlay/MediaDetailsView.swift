@@ -9,6 +9,7 @@ struct MediaDetailsView: View {
     @State private var selectedSeasonId: String?
     @State private var isLoadingDetails = true
     @State private var playingItem: JellyfinItem?
+    @State private var navigationBarId = UUID() // Force navigation bar refresh
     @Environment(\.presentationMode) var presentationMode
     
     // Computed props
@@ -411,10 +412,57 @@ struct MediaDetailsView: View {
                         .padding(.bottom, 50)
                     }
                 }
+                
+                // Custom Back Button Overlay (always visible, not dependent on navigation bar)
+                VStack {
+                    HStack {
+                        Button(action: {
+                            presentationMode.wrappedValue.dismiss()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18, weight: .semibold))
+                                Text("Back")
+                                    .font(.body)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 14)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(Capsule())
+                        }
+                        .padding(.leading, 16)
+                        .padding(.top, geometry.safeAreaInsets.top > 0 ? geometry.safeAreaInsets.top : 16)
+                        
+                        Spacer()
+                    }
+                    Spacer()
+                }
             }
-            .navigationBarHidden(false)
-            .edgesIgnoringSafeArea(.top)
-            .fullScreenCover(item: $playingItem) { item in
+            .navigationBarHidden(true)
+            .edgesIgnoringSafeArea(.all)
+            .gesture(
+                DragGesture()
+                    .onEnded { gesture in
+                        // Swipe from left edge to go back
+                        if gesture.startLocation.x < 50 && gesture.translation.width > 100 {
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                    }
+            )
+            .fullScreenCover(item: $playingItem, onDismiss: {
+                // Force orientation reset after player dismisses
+                DispatchQueue.main.async {
+                    if #available(iOS 16.0, *) {
+                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+                        }
+                    } else {
+                        UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+                    }
+                }
+            }) { item in
                 JellyfinPlayerView(item: item)
             }
         }
