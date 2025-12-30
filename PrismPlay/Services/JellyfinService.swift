@@ -399,16 +399,16 @@ class JellyfinService: ObservableObject {
         limit: Int = 30,
         sortBy: String = "DateCreated",
         sortOrder: String = "Descending",
-        completion: @escaping @Sendable ([JellyfinItem]?) -> Void
+        completion: @escaping @Sendable (([JellyfinItem]?, Int?)) -> Void
     ) {
         guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
-            completion(nil)
+            completion((nil, nil))
             return
         }
         
         let urlString = "\(serverURL)/Users/\(userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,MediaSources,LocationType&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
         guard let url = URL(string: urlString) else {
-            completion(nil)
+            completion((nil, nil))
             return
         }
         
@@ -419,12 +419,12 @@ class JellyfinService: ObservableObject {
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("Error fetching library items: \(error)")
-                DispatchQueue.main.async { completion(nil) }
+                DispatchQueue.main.async { completion((nil, nil)) }
                 return
             }
             
             guard let data = data else {
-                DispatchQueue.main.async { completion(nil) }
+                DispatchQueue.main.async { completion((nil, nil)) }
                 return
             }
             
@@ -432,10 +432,12 @@ class JellyfinService: ObservableObject {
                 do {
                     let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
                     let validItems = self.filterValidItems(itemsResponse.Items)
-                    completion(validItems)
+                    // Return valid items AND the total record count from server (or raw count if total missing)
+                    let total = itemsResponse.TotalRecordCount ?? itemsResponse.Items.count
+                    completion((validItems, total))
                 } catch {
                     print("Error decoding library items: \(error)")
-                    completion(nil)
+                    completion((nil, nil))
                 }
             }
         }.resume()

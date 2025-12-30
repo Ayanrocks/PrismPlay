@@ -40,13 +40,18 @@ struct FullLibraryView: View {
         GridItem(.adaptive(minimum: 150))
     ]
     
+    @State private var totalItems: Int? = nil
+    
+    // Threshold for pre-fetching (load more when user sees this many items from end)
+    let prefetchThreshold = 5
+    
     var body: some View {
         ZStack {
             PrismBackground()
             
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
-                    ForEach(items) { item in
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         NavigationLink(destination: MediaDetailsView(item: item)) {
                             VStack {
                                 AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
@@ -73,21 +78,29 @@ struct FullLibraryView: View {
                                     .multilineTextAlignment(.center)
                             }
                         }
-                        .buttonStyle(PlainButtonStyle()) // Keeps the original look without blue link styling
+                        .buttonStyle(PlainButtonStyle())
                         .onAppear {
-                            // Load more when approaching end
-                            if item.id == items.last?.id && !isLoading && hasMoreItems {
+                            // Prefetch when reaching the threshold
+                            if index >= items.count - prefetchThreshold && !isLoading && hasMoreItems {
                                 loadMoreItems()
                             }
                         }
                     }
                     
-                    // Loading indicator at bottom
-                    if isLoading {
+                    // Loading indicator
+                    if isLoading || hasMoreItems {
+                        // Keep space for loading indicator or bottom spacing
                         ProgressView()
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
+                            .padding()
                             .gridCellColumns(columns.count)
+                            .onAppear {
+                                // Fallback: if user scrolled to bottom and trigger didn't fire
+                                if !isLoading && hasMoreItems {
+                                    loadMoreItems()
+                                }
+                            }
                     }
                 }
                 .padding()
@@ -131,6 +144,8 @@ struct FullLibraryView: View {
         isLoading = true
         currentPage = 0
         items = []
+        totalItems = nil
+        hasMoreItems = true
         
         jellyfinService.fetchLibraryItemsPaginated(
             libraryId: library.Id,
@@ -138,13 +153,23 @@ struct FullLibraryView: View {
             limit: itemsPerPage,
             sortBy: selectedSort.rawValue,
             sortOrder: sortOrder.rawValue
-        ) { fetchedItems in
+        ) { (fetchedItems, total) in
             Task { @MainActor in
                 isLoading = false
                 if let fetchedItems = fetchedItems {
-                    items = fetchedItems
-                    hasMoreItems = fetchedItems.count >= itemsPerPage
-                    currentPage = 1
+                    self.items = fetchedItems
+                    self.totalItems = total
+                    
+                    // Update pagination state
+                    self.currentPage = 1
+                    
+                    // Check if we have more based on total count
+                    if let total = total {
+                        self.hasMoreItems = self.items.count < total
+                    } else {
+                        // Fallback logic if total is missing
+                        self.hasMoreItems = fetchedItems.count >= self.itemsPerPage
+                    }
                 }
             }
         }
@@ -152,6 +177,12 @@ struct FullLibraryView: View {
     
     func loadMoreItems() {
         guard !isLoading && hasMoreItems else { return }
+        
+        // Double check if we've reached the total
+        if let total = totalItems, items.count >= total {
+            hasMoreItems = false
+            return
+        }
         
         isLoading = true
         let startIndex = currentPage * itemsPerPage
@@ -162,13 +193,42 @@ struct FullLibraryView: View {
             limit: itemsPerPage,
             sortBy: selectedSort.rawValue,
             sortOrder: sortOrder.rawValue
-        ) { fetchedItems in
+        ) { (fetchedItems, total) in
             Task { @MainActor in
                 isLoading = false
+                
                 if let fetchedItems = fetchedItems {
-                    items.append(contentsOf: fetchedItems)
-                    hasMoreItems = fetchedItems.count >= itemsPerPage
-                    currentPage += 1
+                    // Update total if it changed (unlikely but possible)
+                    if let total = total {
+                        self.totalItems = total
+                    }
+                    
+                    // Append new unique items
+                    let newItems = fetchedItems.filter { newItem in
+                        !self.items.contains(where: { $0.Id == newItem.Id })
+                    }
+                    
+                    if !newItems.isEmpty {
+                        self.items.append(contentsOf: newItems)
+                        self.currentPage += 1
+                    } else {
+                        // If we got no new items, maybe we reached the end or they were all duplicates/invalid
+                        // But we should increment page to try next batch if we believe there are more
+                        // However, if filtering removed them, we might need to fetch MORE immediately?
+                        // For simplicity, just increment page.
+                        self.currentPage += 1
+                    }
+                    
+                    // Update hasMore
+                    if let total = self.totalItems {
+                         // Stop if we have loaded all items Or if the start index is past the total
+                         self.hasMoreItems = self.items.count < total && (startIndex < total)
+                    } else {
+                         self.hasMoreItems = !fetchedItems.isEmpty
+                    }
+                } else {
+                    // Error case
+                    // Don't disable hasMoreItems, user can try scrolling again (retry)
                 }
             }
         }
@@ -178,6 +238,7 @@ struct FullLibraryView: View {
         items = []
         currentPage = 0
         hasMoreItems = true
+        totalItems = nil
         loadInitialItems()
     }
 }

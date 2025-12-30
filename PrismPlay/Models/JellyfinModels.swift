@@ -41,6 +41,7 @@ struct JellyfinPerson: Codable, Identifiable, Sendable {
 
 struct JellyfinItemsResponse: Codable, Sendable {
     let Items: [JellyfinItem]
+    let TotalRecordCount: Int?
 }
 
 struct MediaStream: Codable, Sendable, Identifiable {
