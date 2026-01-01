@@ -40,21 +40,68 @@ struct JellyfinPlayerView: View {
     @State private var feedbackText: String = ""
     @State private var showFeedback: Bool = false
     
+    // Always-visible slider values
+    @State private var brightnessValue: Float = 0.5
+    @State private var volumeValue: Float = 0.5
+    
     // Slide-to-seek states
     @State private var isDraggingSeek = false
     @State private var seekDragStartTime: Double = 0
     @State private var seekDragOffset: Double = 0
     @State private var showSeekPreview: Bool = false
+    @State private var seekDragStartLocation: CGPoint = .zero
+    @State private var isFlickSeek: Bool = false // Distinguish flick from continuous drag
     
     // Double-tap feedback
     @State private var showDoubleTapFeedback: Bool = false
     @State private var doubleTapIsForward: Bool = true
     
+    // Hold for 2x speed
+    @State private var pressStartTime: Date? = nil
+    @State private var is2xSpeedActive: Bool = false
+    @State private var show2xIndicator: Bool = false
+    
     // Subtitle selection
     @State private var showSubtitlePicker: Bool = false
     
+    // Device orientation tracking for forced landscape
+    @State private var deviceOrientation: UIDeviceOrientation = .portrait
+    
+    // Preferred orientation set by user (cycles through left → right → portrait)
+    @State private var preferredOrientation: UIInterfaceOrientation = .landscapeLeft
+    
+    // Determine if we need to rotate the view to landscape
+    private var shouldRotate: Bool {
+        // Rotate based on preferred orientation
+        switch preferredOrientation {
+        case .landscapeLeft:
+            return deviceOrientation.isPortrait || deviceOrientation == .unknown
+        case .landscapeRight:
+            return deviceOrientation.isPortrait || deviceOrientation == .unknown  
+        case .portrait:
+            return false  // Portrait mode - no rotation
+        default:
+            return deviceOrientation.isPortrait || deviceOrientation == .unknown
+        }
+    }
+    
+    // Rotation angle based on preferred orientation
+    private var rotationAngle: Double {
+        if !shouldRotate { return 0 }
+        
+        switch preferredOrientation {
+        case .landscapeLeft:
+            return 90  // Rotate left
+        case .landscapeRight:
+            return -90  // Rotate right
+        default:
+            return 90
+        }
+    }
+    
     var body: some View {
-        GeometryReader { geometry in
+        GeometryReader { outerGeometry in
+            GeometryReader { geometry in
             ZStack {
                 Color.black.edgesIgnoringSafeArea(.all)
                 
@@ -134,6 +181,62 @@ struct JellyfinPlayerView: View {
                         }
                     }
                     
+                    // 2x Speed Indicator
+                    if show2xIndicator {
+                        VStack {
+                            Text("2x")
+                                .font(.system(size: 32, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(12)
+                                .transition(.opacity)
+                        }
+                    }
+                    
+                    // Brightness & Volume Sliders (auto-hide with controls)
+                    if viewModel.showControls {
+                        GeometryReader { geo in
+                            HStack {
+                                // Left: Brightness Slider
+                                VStack {
+                                    Spacer()
+                                    VerticalSlider(
+                                        value: $brightnessValue,
+                                        label: "Brightness",
+                                        icon: "sun.max.fill",
+                                        onChange: { newValue in
+                                            ScreenUtils.brightness = CGFloat(newValue)
+                                        }
+                                    )
+                                    .frame(width: 40, height: 125)
+                                    Spacer()
+                                }
+                                .padding(.leading, 16)
+                                
+                                Spacer()
+                                
+                                // Right: Volume Slider
+                                VStack {
+                                    Spacer()
+                                    VerticalSlider(
+                                        value: $volumeValue,
+                                        label: "Volume",
+                                        icon: "speaker.wave.3.fill",
+                                        onChange: { newValue in
+                                            VolumeController.shared.setVolume(newValue)
+                                        }
+                                    )
+                                    .frame(width: 40, height: 125)
+                                    Spacer()
+                                }
+                                .padding(.trailing, 16)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                    
                     if viewModel.showControls {
                         controlsOverlay(geometry: geometry)
                     }
@@ -200,19 +303,62 @@ struct JellyfinPlayerView: View {
                     }
                 }
             }
+            .rotationEffect(.degrees(rotationAngle))
+            .frame(
+                width: shouldRotate ? outerGeometry.size.height : outerGeometry.size.width,
+                height: shouldRotate ? outerGeometry.size.width : outerGeometry.size.height
+            )
+            .position(
+                x: outerGeometry.size.width / 2,
+                y: outerGeometry.size.height / 2
+            )
+            }
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .onAppear {
+            // Track device orientation
+            deviceOrientation = UIDevice.current.orientation
+            
+            // Initialize slider values
+            brightnessValue = Float(ScreenUtils.brightness)
+            volumeValue = AVAudioSession.sharedInstance().outputVolume
+            
             setupPlayer()
+            
+            // Listen for orientation changes
+            NotificationCenter.default.addObserver(
+                forName: UIDevice.orientationDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                deviceOrientation = UIDevice.current.orientation
+            }
         }
         .onDisappear {
+            NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
             viewModel.cleanup(itemId: item.Id, jellyfinService: jellyfinService)
         }
         .sheet(isPresented: $showSubtitlePicker) {
             subtitlePickerSheet()
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func toggleOrientation() {
+        // Cycle through: landscapeLeft → landscapeRight → portrait
+        switch preferredOrientation {
+        case .landscapeLeft:
+            preferredOrientation = .landscapeRight
+        case .landscapeRight:
+            preferredOrientation = .portrait
+        case .portrait:
+            preferredOrientation = .landscapeLeft
+        default:
+            preferredOrientation = .landscapeLeft
         }
     }
     
@@ -313,7 +459,7 @@ struct JellyfinPlayerView: View {
     
     private func doubleTapFeedbackOverlay() -> some View {
         HStack {
-            if !doubleTapIsForward { Spacer() }
+            if doubleTapIsForward { Spacer() }  // Forward (right) = space on left
             
             VStack(spacing: 4) {
                 Image(systemName: doubleTapIsForward ? "goforward.\(Int(settings.doubleTapSeekSeconds))" : "gobackward.\(Int(settings.doubleTapSeekSeconds))")
@@ -328,7 +474,7 @@ struct JellyfinPlayerView: View {
             .background(Color.black.opacity(0.5))
             .clipShape(Circle())
             
-            if doubleTapIsForward { Spacer() }
+            if !doubleTapIsForward { Spacer() }  // Backward (left) = space on right
         }
         .padding(.horizontal, 60)
         .transition(.opacity)
@@ -337,107 +483,149 @@ struct JellyfinPlayerView: View {
     // MARK: - Gesture Overlay
     
     private func gestureOverlay(geometry: GeometryProxy) -> some View {
-        HStack(spacing: 0) {
-            // Left Side: Brightness + Double-tap backward
-            Color.clear
-                .contentShape(Rectangle())
-                .frame(width: geometry.size.width / 3)
-                .gesture(
-                    DragGesture(minimumDistance: 10, coordinateSpace: .local)
-                        .onChanged { value in
-                            if !isDraggingBrightness {
-                                isDraggingBrightness = true
-                                dragStartBrightness = ScreenUtils.brightness
-                            }
-                            
-                            let delta = -value.translation.height / geometry.size.height
-                            let newBrightness = min(max(dragStartBrightness + delta, 0.0), 1.0)
-                            
-                            ScreenUtils.brightness = newBrightness
-                            showFeedback(text: "Brightness: \(Int(newBrightness * 100))%")
+        // Single full-screen gesture overlay with comprehensive gesture handling
+        Color.clear
+            .contentShape(Rectangle())
+            .gesture(
+                // Unified drag gesture for all interactions
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { value in
+                        // Start tracking press time on first touch
+                        if pressStartTime == nil {
+                            pressStartTime = Date()
                         }
-                        .onEnded { _ in
-                            isDraggingBrightness = false
-                            dragStartBrightness = 0
-                            hideFeedback()
-                        }
-                )
-                .onTapGesture(count: 2) {
-                    handleDoubleTap(isForward: false)
-                }
-                .onTapGesture(count: 1) {
-                    toggleControls()
-                }
-            
-            // Center: Slide-to-seek + Tap
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 20, coordinateSpace: .local)
-                        .onChanged { value in
-                            if !isDraggingSeek {
-                                isDraggingSeek = true
-                                seekDragStartTime = viewModel.safeCurrentTime
-                            }
-                            
-                            // Calculate seek offset based on horizontal drag
-                            let dragDistance = value.translation.width
-                            seekDragOffset = Double(dragDistance) / settings.slideSeekSensitivity
-                            
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                showSeekPreview = true
+                        
+                        // Check if held for 1+ seconds for 2x speed
+                        if let startTime = pressStartTime,
+                           Date().timeIntervalSince(startTime) >= 1.0,
+                           !is2xSpeedActive {
+                            is2xSpeedActive = true
+                            viewModel.player?.rate = 2.0
+                            withAnimation {
+                                show2xIndicator = true
                             }
                         }
-                        .onEnded { _ in
-                            if isDraggingSeek {
-                                // Apply the seek
-                                let newTime = max(0, min(seekDragStartTime + seekDragOffset, viewModel.safeDuration))
-                                viewModel.seek(to: newTime)
+                        
+                        let translation = value.translation
+                        let location = value.startLocation
+                        let screenWidth = geometry.size.width
+                        
+                        // Determine if this is primarily horizontal or vertical
+                        let absHorizontal = abs(translation.width)
+                        let absVertical = abs(translation.height)
+                        
+                        // Determine zone (left 1/3, center 1/3, right 1/3)
+                        let isLeftZone = location.x < screenWidth / 3
+                        let isRightZone = location.x > (screenWidth * 2 / 3)
+                        
+                        // Only process drag gestures if there's actual movement (lower threshold for better sensitivity)
+                        let hasMovement = absHorizontal > 5 || absVertical > 5
+                        
+                        if hasMovement {
+                            if absHorizontal > absVertical {
+                                // HORIZONTAL GESTURE = SEEK
+                                if !isDraggingSeek {
+                                    isDraggingSeek = true
+                                    seekDragStartTime = viewModel.safeCurrentTime
+                                    seekDragStartLocation = location
+                                }
                                 
-                                isDraggingSeek = false
-                                seekDragOffset = 0
+                                // Continuous scrub based on drag distance
+                                seekDragOffset = Double(translation.width) / settings.slideSeekSensitivity
                                 
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                    withAnimation {
-                                        showSeekPreview = false
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    showSeekPreview = true
+                                }
+                                
+                            } else {
+                                // VERTICAL GESTURE = BRIGHTNESS/VOLUME (only in side zones)
+                                if isLeftZone {
+                                    // Left zone = brightness
+                                    if !isDraggingBrightness {
+                                        isDraggingBrightness = true
+                                        dragStartBrightness = ScreenUtils.brightness
                                     }
+                                    
+                                    let delta = -translation.height / geometry.size.height
+                                    let newBrightness = min(max(dragStartBrightness + delta, 0.0), 1.0)
+                                    
+                                    ScreenUtils.brightness = newBrightness
+                                    brightnessValue = Float(newBrightness)
+                                    
+                                } else if isRightZone {
+                                    // Right zone = volume
+                                    if !isDraggingVolume {
+                                        isDraggingVolume = true
+                                        dragStartVolume = AVAudioSession.sharedInstance().outputVolume
+                                    }
+                                    
+                                    let delta = Float(-translation.height / geometry.size.height)
+                                    let newVolume = min(max(dragStartVolume + delta, 0.0), 1.0)
+                                    
+                                    VolumeController.shared.setVolume(newVolume)
+                                    volumeValue = newVolume
                                 }
                             }
                         }
-                )
-                .onTapGesture { toggleControls() }
-            
-            // Right Side: Volume + Double-tap forward
-            Color.clear
-                .contentShape(Rectangle())
-                .frame(width: geometry.size.width / 3)
-                .gesture(
-                    DragGesture(minimumDistance: 10, coordinateSpace: .local)
-                        .onChanged { value in
-                            if !isDraggingVolume {
-                                isDraggingVolume = true
-                                dragStartVolume = AVAudioSession.sharedInstance().outputVolume
+                    }
+                    .onEnded { value in
+                        // ALWAYS restore normal speed when finger lifts
+                        if is2xSpeedActive {
+                            is2xSpeedActive = false
+                            if viewModel.isPlaying {
+                                viewModel.player?.rate = 1.0
                             }
-                            
-                            let delta = Float(-value.translation.height / geometry.size.height)
-                            let newVolume = min(max(dragStartVolume + delta, 0.0), 1.0)
-                            
-                            VolumeController.shared.setVolume(newVolume)
-                            showFeedback(text: "Volume: \(Int(newVolume * 100))%")
+                            withAnimation {
+                                show2xIndicator = false
+                            }
                         }
-                        .onEnded { _ in
+                        
+                        // Reset press tracking
+                        pressStartTime = nil
+                        
+                        // Detect if this was just a tap (no movement, quick release)
+                        let translation = value.translation
+                        let tapThreshold: CGFloat = 5
+                        let isTap = abs(translation.width) < tapThreshold && abs(translation.height) < tapThreshold
+                        
+                        // If it's a tap and not dragging anything, toggle controls
+                        if isTap && !isDraggingSeek && !isDraggingBrightness && !isDraggingVolume {
+                            toggleControls()
+                        }
+                        
+                        if isDraggingSeek {
+                            // Apply the seek
+                            let newTime = max(0, min(seekDragStartTime + seekDragOffset, viewModel.safeDuration))
+                            viewModel.seek(to: newTime)
+                            
+                            isDraggingSeek = false
+                            isFlickSeek = false
+                            seekDragOffset = 0
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                withAnimation {
+                                    showSeekPreview = false
+                                }
+                            }
+                        }
+                        
+                        if isDraggingBrightness {
+                            isDraggingBrightness = false
+                            dragStartBrightness = 0
+                        }
+                        
+                        if isDraggingVolume {
                             isDraggingVolume = false
                             dragStartVolume = 0
-                            hideFeedback()
                         }
-                )
-                .onTapGesture(count: 2) {
-                    handleDoubleTap(isForward: true)
-                }
-                .onTapGesture(count: 1) {
-                    toggleControls()
-                }
-        }
+                    }
+            )
+            .onTapGesture(count: 2, perform: {
+                toggleControls()
+            })
+            .onTapGesture(count: 1) {
+                toggleControls()
+            }
     }
     
     // MARK: - Controls Overlay
@@ -500,7 +688,7 @@ struct JellyfinPlayerView: View {
                             // Rotate Screen
                             GlassmorphicPlayerButton(
                                 icon: Image(systemName: "rotate.right"),
-                                action: { viewModel.toggleOrientation() },
+                                action: { toggleOrientation() },
                                 size: 40,
                                 iconSize: 18
                             )
@@ -1208,19 +1396,19 @@ class JellyfinPlayerViewModel: ObservableObject {
         }
     }
     
-    func toggleOrientation() {
+
+    
+    func forceOrientation(_ orientation: UIInterfaceOrientation) {
         if #available(iOS 16.0, *) {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
             
-            if windowScene.effectiveGeometry.interfaceOrientation.isLandscape {
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-            } else {
+            if orientation.isLandscape {
                 windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape))
+            } else {
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
             }
         } else {
-            let currentOrientation = UIDevice.current.orientation
-            let value = currentOrientation.isLandscape ? UIInterfaceOrientation.portrait.rawValue : UIInterfaceOrientation.landscapeRight.rawValue
-            UIDevice.current.setValue(value, forKey: "orientation")
+            UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
         }
     }
     
