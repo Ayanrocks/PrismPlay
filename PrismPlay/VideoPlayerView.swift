@@ -247,122 +247,115 @@ struct VideoPlayerView: View {
     // MARK: - Controls Overlay
     
     private func controlsOverlay() -> some View {
-        VStack {
-            // Top Bar
-            HStack {
-                Button(action: {
-                    viewModel.resetOrientation()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                }) {
-                    PrismIcon.close.image
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding()
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
-                }
-                
-                Spacer()
-                
-                // Aspect Ratio Button
-                Button(action: {
-                    _ = settings.cycleAspectRatio()
-                }) {
-                    Image(systemName: settings.currentAspectRatio.iconName)
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding()
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
-                }
-                
-                // Subtitle Button
-                Button(action: {
-                    viewModel.toggleSubtitles()
-                }) {
-                    Image(systemName: viewModel.subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble")
-                        .foregroundColor(viewModel.subtitlesEnabled ? .purple : .white)
-                        .font(.title2)
-                        .padding()
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
-                }
-                
-                Button(action: {
-                    viewModel.toggleOrientation()
-                }) {
-                    PrismIcon.rotateScreen.image
-                        .foregroundColor(.white)
-                        .font(.title2)
-                        .padding()
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
-                }
-            }
-            .padding(.top, 40)
-            .padding(.horizontal)
-            
-            Spacer()
-            
-            // Center Controls: Skip Backward, Play/Pause, Skip Forward
-            HStack(spacing: 50) {
-                Button(action: {
-                    viewModel.seekRelative(by: -settings.skipButtonSeconds)
-                }) {
-                    PrismIcon.seekBackward.image
-                        .font(.system(size: 30))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
-                }
-                
-                Button(action: {
-                    viewModel.togglePlayPause()
-                }) {
-                    (viewModel.isPlaying ? PrismIcon.pause.image : PrismIcon.play.image)
-                        .font(.system(size: 70))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
-                }
-                
-                Button(action: {
-                    viewModel.seekRelative(by: settings.skipButtonSeconds)
-                }) {
-                    PrismIcon.seekForward.image
-                        .font(.system(size: 30))
-                        .foregroundColor(.white)
-                        .shadow(radius: 5)
-                }
-            }
-            
-            Spacer()
-            
-            // Bottom Controls
-            VStack(spacing: 0) {
-                HStack {
-                    Text(formatTime(viewModel.currentTime))
-                        .font(.caption)
-                        .foregroundColor(.white)
-                    
-                    Slider(value: $viewModel.currentTime, in: 0...max(viewModel.duration, 1), onEditingChanged: { editing in
-                        viewModel.isSeeking = editing
-                        if !editing {
-                            viewModel.seek(to: viewModel.currentTime)
+        GeometryReader { geometry in
+            ZStack {
+                // Top Bar
+                VStack {
+                    HStack(spacing: 12) {
+                        // Close button
+                        GlassmorphicPlayerButton(
+                            icon: PrismIcon.close.image,
+                            action: {
+                                viewModel.resetOrientation()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    presentationMode.wrappedValue.dismiss()
+                                }
+                            },
+                            size: 44,
+                            iconSize: 22
+                        )
+                        
+                        Spacer()
+                        
+                        // Quick Access Buttons
+                        HStack(spacing: 8) {
+                            // Aspect Ratio Button
+                            GlassmorphicPlayerButton(
+                                icon: Image(systemName: settings.currentAspectRatio.iconName),
+                                action: { _ = settings.cycleAspectRatio() },
+                                size: 40,
+                                iconSize: 18
+                            )
+                            
+                            // Subtitle Button
+                            GlassmorphicPlayerButton(
+                                icon: Image(systemName: viewModel.subtitlesEnabled ? "captions.bubble.fill" : "captions.bubble"),
+                                action: { viewModel.toggleSubtitles() },
+                                size: 40,
+                                iconSize: 18
+                            )
+                            
+                            // Rotate Screen Button
+                            GlassmorphicPlayerButton(
+                                icon: PrismIcon.rotateScreen.image,
+                                action: { viewModel.toggleOrientation() },
+                                size: 40,
+                                iconSize: 18
+                            )
                         }
-                    })
-                    .accentColor(.purple)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, geometry.safeAreaInsets.top > 0 ? geometry.safeAreaInsets.top + 8 : 16)
                     
-                    Text(formatTime(viewModel.duration))
-                        .font(.caption)
-                        .foregroundColor(.white)
+                    Spacer()
                 }
-                .padding()
+                
+                // Center Controls
+                HStack(spacing: 50) {
+                    Button(action: { viewModel.seekRelative(by: -settings.skipButtonSeconds) }) {
+                        PrismIcon.seekBackward.image
+                            .font(.system(size: 30))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
+                    
+                    Button(action: { viewModel.togglePlayPause() }) {
+                        (viewModel.isPlaying ? PrismIcon.pause.image : PrismIcon.play.image)
+                            .font(.system(size: 70))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
+                    
+                    Button(action: { viewModel.seekRelative(by: settings.skipButtonSeconds) }) {
+                        PrismIcon.seekForward.image
+                            .font(.system(size: 30))
+                            .foregroundColor(.white)
+                            .shadow(radius: 5)
+                    }
+                }
+                
+                // Bottom Bar
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        PlayerTimeLabel(time: viewModel.currentTime)
+                        
+                        UnifiedVideoProgressBar(
+                            currentTime: $viewModel.currentTime,
+                            duration: viewModel.duration,
+                            bufferedRanges: viewModel.bufferedRanges,
+                            onEditingChanged: { editing in
+                                viewModel.isSeeking = editing
+                                if !editing {
+                                    viewModel.seek(to: viewModel.currentTime)
+                                }
+                            }
+                        )
+                        .frame(height: 30)
+                        
+                        PlayerTimeLabel(time: viewModel.duration)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom)
+                    .background(
+                        LinearGradient(gradient: Gradient(colors: [.clear, .black.opacity(0.8)]), startPoint: .top, endPoint: .bottom)
+                    )
+                }
             }
-            .background(
-                LinearGradient(gradient: Gradient(colors: [.clear, .black.opacity(0.8)]), startPoint: .top, endPoint: .bottom)
-            )
         }
+        .edgesIgnoringSafeArea(.all)
         .transition(.opacity)
     }
     
@@ -488,6 +481,7 @@ class PlayerViewModel: ObservableObject {
     @Published var showControls = true
     @Published var isSeeking = false
     @Published var subtitlesEnabled = false
+    @Published var bufferedRanges: [(start: Double, end: Double)] = []
     
     private var timeObserver: Any?
     private var controlTimer: Timer?
@@ -521,6 +515,7 @@ class PlayerViewModel: ObservableObject {
             }
         }
         
+        
         timeObserver = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             guard let self = self, !self.isSeeking else { return }
             self.currentTime = CMTimeGetSeconds(time)
@@ -530,12 +525,32 @@ class PlayerViewModel: ObservableObject {
                      self.duration = CMTimeGetSeconds(currentItem.duration)
                 }
             }
+            
+            // Update buffered ranges for progress bar
+            self.updateBufferedRanges()
         }
         
         player?.play()
         isPlaying = true
         resetControlTimer()
         configureAudioSession()
+    }
+    
+    private func updateBufferedRanges() {
+        guard let currentItem = player?.currentItem else {
+            bufferedRanges = []
+            return
+        }
+        
+        var ranges: [(start: Double, end: Double)] = []
+        for range in currentItem.loadedTimeRanges {
+            let timeRange = range.timeRangeValue
+            let start = CMTimeGetSeconds(timeRange.start)
+            let end = CMTimeGetSeconds(CMTimeAdd(timeRange.start, timeRange.duration))
+            ranges.append((start: start, end: end))
+        }
+        
+        bufferedRanges = ranges
     }
     
     private func configureAudioSession() {

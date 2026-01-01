@@ -22,90 +22,7 @@ struct VideoQuality: Identifiable, Equatable, Hashable {
     static let allPresets = [p1080, p720, p480, p360]
 }
 
-// MARK: - Video Progress Bar with Buffer Indicator
-
-/// A custom progress bar that shows buffered content as a grey bar behind the playback progress
-struct VideoProgressBar: View {
-    @Binding var currentTime: Double
-    let duration: Double
-    let bufferedRanges: [(start: Double, end: Double)]
-    let onEditingChanged: (Bool) -> Void
-    
-    @State private var isDragging = false
-    @State private var dragValue: Double = 0
-    
-    private let trackHeight: CGFloat = 4
-    private let thumbSize: CGFloat = 14
-    
-    var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let safeDuration = duration > 0 ? duration : 1
-            let centerY = geometry.size.height / 2
-            
-            ZStack {
-                // Background track (dark grey)
-                Capsule()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: width, height: trackHeight)
-                    .position(x: width / 2, y: centerY)
-                
-                // Buffer indicator (light grey/white) - shows loaded content
-                ForEach(Array(bufferedRanges.enumerated()), id: \.offset) { _, range in
-                    let startFraction = max(0, min(range.start / safeDuration, 1))
-                    let endFraction = max(0, min(range.end / safeDuration, 1))
-                    let rangeWidth = (endFraction - startFraction) * width
-                    let centerX = (startFraction * width) + (rangeWidth / 2)
-                    
-                    if rangeWidth > 0 {
-                        Capsule()
-                            .fill(Color.white.opacity(0.6))
-                            .frame(width: rangeWidth, height: trackHeight)
-                            .position(x: centerX, y: centerY)
-                    }
-                }
-                
-                // Progress indicator (purple)
-                let progressFraction = max(0, min((isDragging ? dragValue : currentTime) / safeDuration, 1))
-                let progressWidth = progressFraction * width
-                
-                if progressWidth > 0 {
-                    Capsule()
-                        .fill(Color.purple)
-                        .frame(width: progressWidth, height: trackHeight)
-                        .position(x: progressWidth / 2, y: centerY)
-                }
-                
-                // Thumb/scrubber
-                Circle()
-                    .fill(Color.purple)
-                    .frame(width: thumbSize, height: thumbSize)
-                    .shadow(color: .black.opacity(0.3), radius: 2)
-                    .position(x: progressFraction * width, y: centerY)
-                    .scaleEffect(isDragging ? 1.3 : 1.0)
-                    .animation(.easeInOut(duration: 0.1), value: isDragging)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            onEditingChanged(true)
-                        }
-                        
-                        let fraction = max(0, min(value.location.x / width, 1))
-                        dragValue = fraction * safeDuration
-                        currentTime = dragValue
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                        onEditingChanged(false)
-                    }
-            )
-        }
-    }
-}
+// MARK: - Video Progress Bar removed - now using UnifiedVideoProgressBar from PlayerControlComponents.swift
 
 
 struct JellyfinPlayerView: View {
@@ -185,6 +102,35 @@ struct JellyfinPlayerView: View {
                                 .padding(.bottom, 20)
                                 .padding(.horizontal, 32)
                                 .transition(.opacity)
+                        }
+                    }
+                    
+                    // Buffering indicator - small loader in corner
+                    if viewModel.isBuffering {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                    Text("Buffering...")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    ZStack {
+                                        Color.black.opacity(0.7)
+                                        VisualEffectBlur(blurStyle: .systemThinMaterial)
+                                    }
+                                )
+                                .cornerRadius(12)
+                                .padding(.trailing, 16)
+                                .padding(.top, geometry.safeAreaInsets.top + 60)
+                            }
+                            Spacer()
                         }
                     }
                     
@@ -503,19 +449,17 @@ struct JellyfinPlayerView: View {
                 VStack {
                     HStack(spacing: 12) {
                         // Close button
-                        Button(action: {
-                            viewModel.resetOrientation()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                dismiss()
-                            }
-                        }) {
-                            PrismIcon.close.image
-                                .foregroundColor(.white)
-                                .font(.title2)
-                                .padding(12)
-                                .background(Color.black.opacity(0.5))
-                                .clipShape(Circle())
-                        }
+                        GlassmorphicPlayerButton(
+                            icon: PrismIcon.close.image,
+                            action: {
+                                viewModel.resetOrientation()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    dismiss()
+                                }
+                            },
+                            size: 44,
+                            iconSize: 22
+                        )
                         
                         Spacer()
                         
@@ -538,34 +482,28 @@ struct JellyfinPlayerView: View {
                         // Quick Access Buttons
                         HStack(spacing: 8) {
                             // Aspect Ratio
-                            Button(action: { _ = settings.cycleAspectRatio() }) {
-                                Image(systemName: settings.currentAspectRatio.iconName)
-                                    .foregroundColor(.white)
-                                    .font(.title3)
-                                    .padding(10)
-                                    .background(Color.black.opacity(0.5))
-                                    .clipShape(Circle())
-                            }
+                            GlassmorphicPlayerButton(
+                                icon: Image(systemName: settings.currentAspectRatio.iconName),
+                                action: { _ = settings.cycleAspectRatio() },
+                                size: 40,
+                                iconSize: 18
+                            )
                             
                             // Subtitles
-                            Button(action: { showSubtitlePicker = true }) {
-                                Image(systemName: viewModel.selectedSubtitleIndex != nil ? "captions.bubble.fill" : "captions.bubble")
-                                    .foregroundColor(.white)
-                                    .font(.title3)
-                                    .padding(10)
-                                    .background(Color.black.opacity(0.5))
-                                    .clipShape(Circle())
-                            }
+                            GlassmorphicPlayerButton(
+                                icon: Image(systemName: viewModel.selectedSubtitleIndex != nil ? "captions.bubble.fill" : "captions.bubble"),
+                                action: { showSubtitlePicker = true },
+                                size: 40,
+                                iconSize: 18
+                            )
                             
                             // Rotate Screen
-                            Button(action: { viewModel.toggleOrientation() }) {
-                                Image(systemName: "rotate.right")
-                                    .foregroundColor(.white)
-                                    .font(.title3)
-                                    .padding(10)
-                                    .background(Color.black.opacity(0.5))
-                                    .clipShape(Circle())
-                            }
+                            GlassmorphicPlayerButton(
+                                icon: Image(systemName: "rotate.right"),
+                                action: { viewModel.toggleOrientation() },
+                                size: 40,
+                                iconSize: 18
+                            )
                             
                             // Quality Menu (Settings)
                             Menu {
@@ -624,11 +562,9 @@ struct JellyfinPlayerView: View {
                     Spacer()
                     
                     HStack {
-                        Text(formatTime(viewModel.safeCurrentTime))
-                            .font(.caption)
-                            .foregroundColor(.white)
+                        PlayerTimeLabel(time: viewModel.safeCurrentTime)
                         
-                        VideoProgressBar(
+                        UnifiedVideoProgressBar(
                             currentTime: Binding(
                                 get: { viewModel.safeCurrentTime },
                                 set: { viewModel.safeCurrentTime = $0 }
@@ -643,11 +579,8 @@ struct JellyfinPlayerView: View {
                             }
                         )
                         .frame(height: 30) // Touch target area
-
                         
-                        Text(formatTime(viewModel.safeDuration))
-                            .font(.caption)
-                            .foregroundColor(.white)
+                        PlayerTimeLabel(time: viewModel.safeDuration)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -796,6 +729,7 @@ class JellyfinPlayerViewModel: ObservableObject {
     @Published var availableQualities: [VideoQuality] = []
     @Published var errorMessage: String? = nil
     @Published var isRetrying: Bool = false
+    @Published var isBuffering: Bool = false
     
     // Buffer indicator - tracks loaded time ranges from AVPlayer
     @Published var bufferedRanges: [(start: Double, end: Double)] = []
@@ -804,7 +738,8 @@ class JellyfinPlayerViewModel: ObservableObject {
     private var subtitleCues: [SubtitleCue] = []
     
     private var timeObserver: Any?
-    private var statusObserver: Any?
+    private var statusObserver: NSKeyValueObservation?
+    private var bufferingObserver: NSKeyValueObservation?
     private var controlTimer: Timer?
     private var progressReportTimer: Timer?
     private var currentItemId: String?
@@ -947,6 +882,13 @@ class JellyfinPlayerViewModel: ObservableObject {
             player = AVPlayer(playerItem: playerItem)
         } else {
             player?.replaceCurrentItem(with: playerItem)
+        }
+        
+        // Observe buffering state via timeControlStatus
+        bufferingObserver = player?.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            DispatchQueue.main.async {
+                self?.isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+            }
         }
         
         // Disable automatic media selection to allow manual subtitle control
@@ -1204,6 +1146,7 @@ class JellyfinPlayerViewModel: ObservableObject {
         hlsCacheController.stop()
         
         statusObserver = nil
+        bufferingObserver = nil
         progressReportTimer?.invalidate()
         controlTimer?.invalidate()
         player?.pause()
