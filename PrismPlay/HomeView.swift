@@ -3,8 +3,9 @@ import SwiftUI
 struct LibraryWithItems: Identifiable {
     let library: JellyfinLibrary
     var items: [JellyfinItem]
+    let serverConfig: JellyfinServerConfig
     
-    var id: String { library.Id }
+    var id: String { "\(serverConfig.id.uuidString)-\(library.Id)" }
 }
 
 struct HomeView: View {
@@ -111,6 +112,7 @@ struct HomeView: View {
                                 LibraryRowView(
                                     library: libraryWithItems.library,
                                     items: libraryWithItems.items,
+                                    serverConfig: libraryWithItems.serverConfig,
                                     jellyfinService: jellyfinService
                                 )
                             }
@@ -137,45 +139,41 @@ struct HomeView: View {
     func loadLibraries() {
         guard !jellyfinService.savedServers.isEmpty else { return }
         
-        // Auto-select first server if not authenticated
-        if !jellyfinService.isAuthenticated, let firstServer = jellyfinService.savedServers.first {
-            jellyfinService.selectServer(firstServer)
-        }
-        
         isLoading = true
         librariesWithItems = []
         resumeItems = []
         
-        // Fetch resume items first
-        jellyfinService.fetchResumeItems { items in
-            Task { @MainActor in
-                self.resumeItems = items ?? []
-            }
-        }
-        
         Task {
-            // First fetch libraries
-            guard let libraries = await fetchLibrariesAsync() else {
-                await MainActor.run { isLoading = false }
-                return
-            }
+            var allLibrariesWithItems: [LibraryWithItems] = []
+            var allResumeItems: [JellyfinItem] = []
             
-            // Then fetch items for each library in parallel
-            var newLibrariesWithItems: [LibraryWithItems] = []
-            
-            await withTaskGroup(of: LibraryWithItems?.self) { group in
-                for library in libraries {
-                    group.addTask {
-                        if let items = await fetchLibraryItemsAsync(libraryId: library.Id, limit: 10) {
-                            return LibraryWithItems(library: library, items: items)
-                        }
-                        return nil
-                    }
+            // Fetch from ALL servers
+            for server in jellyfinService.savedServers {
+                // Fetch resume items for this server
+                if let resumeItems = await fetchResumeItemsAsync(for: server) {
+                    allResumeItems.append(contentsOf: resumeItems)
                 }
                 
-                for await result in group {
-                    if let libItem = result {
-                        newLibrariesWithItems.append(libItem)
+                // Fetch libraries for this server
+                guard let libraries = await fetchLibrariesAsync(for: server) else {
+                    continue
+                }
+                
+                // Fetch items for each library in parallel
+                await withTaskGroup(of: LibraryWithItems?.self) { group in
+                    for library in libraries {
+                        group.addTask {
+                            if let items = await self.fetchLibraryItemsAsync(libraryId: library.Id, for: server, limit: 10) {
+                                return LibraryWithItems(library: library, items: items, serverConfig: server)
+                            }
+                            return nil
+                        }
+                    }
+                    
+                    for await result in group {
+                        if let libItem = result {
+                            allLibrariesWithItems.append(libItem)
+                        }
                     }
                 }
             }
@@ -183,7 +181,7 @@ struct HomeView: View {
             // Sort libraries on Main Actor
             await MainActor.run {
                 // Sort libraries: Movies first, then TV Shows, then others
-                let sortedLibraries = newLibrariesWithItems.sorted { lib1, lib2 in
+                let sortedLibraries = allLibrariesWithItems.sorted { lib1, lib2 in
                     let type1 = lib1.library.CollectionType?.lowercased() ?? ""
                     let type2 = lib2.library.CollectionType?.lowercased() ?? ""
                     
@@ -196,28 +194,42 @@ struct HomeView: View {
                     } else if type1 != "tvshows" && type1 != "movies" && type2 == "tvshows" {
                         return false
                     }
+                    // If same type, sort by server name then library name
+                    if type1 == type2 {
+                        if lib1.serverConfig.name != lib2.serverConfig.name {
+                            return lib1.serverConfig.name < lib2.serverConfig.name
+                        }
+                    }
                     return lib1.library.Name < lib2.library.Name
                 }
                 
                 self.librariesWithItems = sortedLibraries
+                self.resumeItems = allResumeItems
                 self.isLoading = false
             }
         }
     }
     
-    // Helper async wrappers (since JellyfinService uses callbacks)
-    // Ideally JellyfinService should expose async methods, but we can wrap them here or update JellyfinService later.
-    private func fetchLibrariesAsync() async -> [JellyfinLibrary]? {
+    // Helper async wrappers for multi-server support
+    private func fetchLibrariesAsync(for server: JellyfinServerConfig) async -> [JellyfinLibrary]? {
         await withCheckedContinuation { continuation in
-            jellyfinService.fetchLibraries { libraries in
+            jellyfinService.fetchLibraries(for: server) { libraries in
                 continuation.resume(returning: libraries)
             }
         }
     }
     
-    private func fetchLibraryItemsAsync(libraryId: String, limit: Int) async -> [JellyfinItem]? {
+    private func fetchLibraryItemsAsync(libraryId: String, for server: JellyfinServerConfig, limit: Int) async -> [JellyfinItem]? {
         await withCheckedContinuation { continuation in
-            jellyfinService.fetchLibraryItems(libraryId: libraryId, limit: limit) { items in
+            jellyfinService.fetchLibraryItems(libraryId: libraryId, for: server, limit: limit) { items in
+                continuation.resume(returning: items)
+            }
+        }
+    }
+    
+    private func fetchResumeItemsAsync(for server: JellyfinServerConfig) async -> [JellyfinItem]? {
+        await withCheckedContinuation { continuation in
+            jellyfinService.fetchResumeItems(for: server) { items in
                 continuation.resume(returning: items)
             }
         }

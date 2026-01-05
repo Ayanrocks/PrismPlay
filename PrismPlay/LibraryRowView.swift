@@ -3,12 +3,13 @@ import SwiftUI
 struct LibraryRowView: View {
     let library: JellyfinLibrary
     let items: [JellyfinItem]
+    let serverConfig: JellyfinServerConfig  // NEW
     let jellyfinService: JellyfinService
     
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
-                Text(library.Name)
+                Text("\(library.Name) - \(serverConfig.name)")  // UPDATED with server identifier
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(.white)
@@ -37,7 +38,7 @@ struct LibraryRowView: View {
                     ForEach(items) { item in
                         NavigationLink(destination: MediaDetailsView(item: item)) {
                             VStack(alignment: .leading, spacing: 8) {
-                                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
+                                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag, server: serverConfig)) { image in
                                     image
                                         .resizable()
                                         .aspectRatio(contentMode: .fill)

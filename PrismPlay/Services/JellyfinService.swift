@@ -82,6 +82,17 @@ class JellyfinService: ObservableObject {
         saveServers()
     }
     
+    func updateServer(at index: Int, with server: JellyfinServerConfig) {
+        guard index >= 0 && index < savedServers.count else { return }
+        savedServers[index] = server
+        saveServers()
+        
+        // If this is the currently selected server, update the active connection
+        if isAuthenticated && serverURL == savedServers[index].url && userId == savedServers[index].userId {
+            selectServer(server)
+        }
+    }
+    
     func selectServer(_ server: JellyfinServerConfig) {
         self.serverURL = server.url
         self.userId = server.userId
@@ -350,6 +361,133 @@ class JellyfinService: ObservableObject {
                 }
             }
         }.resume()
+    }
+    
+    // MARK: - Multi-Server Support
+    
+    /// Fetches libraries from a specific server without changing global state
+    func fetchLibraries(for server: JellyfinServerConfig, completion: @escaping @Sendable ([JellyfinLibrary]?) -> Void) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Views"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching libraries from \(server.name): \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let librariesResponse = try JellyfinDecoder.decode(JellyfinLibrariesResponse.self, from: data)
+                    completion(librariesResponse.Items)
+                } catch {
+                    print("Error decoding libraries from \(server.name): \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+    
+    /// Fetches library items from a specific server without changing global state
+    func fetchLibraryItems(libraryId: String, for server: JellyfinServerConfig, limit: Int = 10, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Items?ParentId=\(libraryId)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,MediaSources,LocationType&SortBy=DateCreated&SortOrder=Descending"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching library items from \(server.name): \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    completion(validItems)
+                } catch {
+                    print("Error decoding library items from \(server.name): \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+    
+    /// Fetches resume items from a specific server without changing global state
+    func fetchResumeItems(for server: JellyfinServerConfig, limit: Int = 12, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Items/Resume?Limit=\(limit)&Fields=PrimaryImageAspectRatio,Overview,MediaSources,RunTimeTicks,UserData,SeriesName,SeriesId,LocationType&EnableImageTypes=Primary,Backdrop,Thumb"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching resume items from \(server.name): \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    completion(validItems)
+                } catch {
+                    print("Error decoding resume items from \(server.name): \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+    
+    /// Gets image URL for an item from a specific server
+    func imageURL(for itemId: String, imageTag: String?, type: String = "Primary", server: JellyfinServerConfig) -> URL? {
+        var urlString = ""
+        if type == "Backdrop" {
+             urlString = "\(server.url)/Items/\(itemId)/Images/Backdrop/0"
+        } else {
+             urlString = "\(server.url)/Items/\(itemId)/Images/\(type)"
+        }
+        
+        if let tag = imageTag {
+            urlString += "?tag=\(tag)"
+        }
+        return URL(string: urlString)
     }
     
     func fetchLibraryItems(libraryId: String, limit: Int = 10, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {

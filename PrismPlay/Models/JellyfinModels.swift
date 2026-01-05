@@ -2,9 +2,9 @@
 
 struct JellyfinServerConfig: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
-    let name: String
-    let url: String
-    let username: String
+    var name: String
+    var url: String
+    var username: String
     let accessToken: String
     let userId: String
 }

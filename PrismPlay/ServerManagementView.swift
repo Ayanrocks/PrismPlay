@@ -3,6 +3,9 @@ import SwiftUI
 struct ServerManagementView: View {
     @ObservedObject private var jellyfinService = JellyfinService.shared
     @State private var showAddServer = false
+    @State private var showEditServer = false
+    @State private var editingServer: JellyfinServerConfig?
+    @State private var editingServerIndex: Int = 0
     
     var body: some View {
         ZStack {
@@ -35,10 +38,8 @@ struct ServerManagementView: View {
                     }
                 } else {
                     List {
-                        ForEach(jellyfinService.savedServers) { server in
-                            Button(action: {
-                                jellyfinService.selectServer(server)
-                            }) {
+                        ForEach(Array(jellyfinService.savedServers.enumerated()), id: \.element.id) { index, server in
+                            NavigationLink(destination: ServerLibrariesView(server: server)) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(server.name)
@@ -53,10 +54,6 @@ struct ServerManagementView: View {
                                         Image(systemName: "checkmark.circle.fill")
                                             .font(.title2)
                                             .foregroundColor(.green)
-                                    } else {
-                                        Image(systemName: "chevron.right")
-                                            .font(.footnote)
-                                            .foregroundColor(.white.opacity(0.3))
                                     }
                                 }
                                 .padding()
@@ -71,8 +68,23 @@ struct ServerManagementView: View {
                             }
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    deleteServer(at: IndexSet(integer: index))
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                
+                                Button {
+                                    editingServerIndex = index
+                                    editingServer = server
+                                    showEditServer = true
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .tint(.purple)
+                            }
                         }
-                        .onDelete(perform: deleteServer)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -91,6 +103,15 @@ struct ServerManagementView: View {
         }
         .sheet(isPresented: $showAddServer) {
             JellyfinLoginView(isPresented: $showAddServer)
+        }
+        .sheet(isPresented: $showEditServer) {
+            if let editingServer = editingServer {
+                ServerEditView(
+                    isPresented: $showEditServer,
+                    server: editingServer,
+                    serverIndex: editingServerIndex
+                )
+            }
         }
     }
     
