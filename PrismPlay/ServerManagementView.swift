@@ -76,6 +76,10 @@ struct ServerManagementView: View {
                                 }
                                 
                                 Button {
+                                    print("Edit button tapped for server at index: \(index)")
+                                    print("Server name: \(server.name)")
+                                    print("Server url: \(server.url)")
+                                    print("Server username: \(server.username)")
                                     editingServerIndex = index
                                     editingServer = server
                                     showEditServer = true

@@ -66,11 +66,9 @@ struct ServerLibrariesView: View {
     }
     
     func loadLibraries() {
-        // Ensure this server is selected
-        jellyfinService.selectServer(server)
-        
+        // Use the multi-server method to fetch libraries without changing global state
         isLoading = true
-        jellyfinService.fetchLibraries { fetchedLibraries in
+        jellyfinService.fetchLibraries(for: server) { fetchedLibraries in
             Task { @MainActor in
                 isLoading = false
                 if let fetchedLibraries = fetchedLibraries {

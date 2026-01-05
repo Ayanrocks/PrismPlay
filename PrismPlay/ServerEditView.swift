@@ -16,8 +16,22 @@ struct ServerEditView: View {
         self.server = server
         self.serverIndex = serverIndex
         
+        // Debug: Print server details
+        print("ServerEditView init - Server name: \(server.name)")
+        print("ServerEditView init - Server url: \(server.url)")
+        print("ServerEditView init - Server username: \(server.username)")
+        
         // Initialize state from server config
-        let urlWithoutProtocol = server.url.replacingOccurrences(of: "http://", with: "").replacingOccurrences(of: "https://", with: "")
+        var urlWithoutProtocol = server.url
+        if urlWithoutProtocol.hasPrefix("http://") {
+            urlWithoutProtocol = String(urlWithoutProtocol.dropFirst("http://".count))
+        } else if urlWithoutProtocol.hasPrefix("https://") {
+            urlWithoutProtocol = String(urlWithoutProtocol.dropFirst("https://".count))
+        }
+        
+        print("ServerEditView init - URL without protocol: \(urlWithoutProtocol)")
+        print("ServerEditView init - Username for field: \(server.username)")
+        
         _serverURL = State(initialValue: urlWithoutProtocol)
         _username = State(initialValue: server.username)
     }
