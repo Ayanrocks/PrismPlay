@@ -5,6 +5,7 @@ enum AppTab: Int, Hashable {
     case search
     case localFiles
     case servers
+    case settings
 }
 
 struct ContentView: View {
@@ -13,6 +14,7 @@ struct ContentView: View {
     @State private var searchNavigationPath = NavigationPath()
     @State private var localFilesNavigationPath = NavigationPath()
     @State private var serversNavigationPath = NavigationPath()
+    @State private var settingsNavigationPath = NavigationPath()
     
     init() {
         // Customize Tab Bar appearance to match the premium feel
@@ -58,6 +60,14 @@ struct ContentView: View {
                 Label("Servers", systemImage: "server.rack")
             }
             .tag(AppTab.servers)
+            
+            NavigationStack(path: $settingsNavigationPath) {
+                SettingsView()
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+            .tag(AppTab.settings)
         }
         .accentColor(.purple)
         .preferredColorScheme(.dark)
@@ -79,6 +89,8 @@ struct ContentView: View {
                         localFilesNavigationPath = NavigationPath()
                     case .servers:
                         serversNavigationPath = NavigationPath()
+                    case .settings:
+                        settingsNavigationPath = NavigationPath()
                     }
                 }
                 selectedTab = newTab

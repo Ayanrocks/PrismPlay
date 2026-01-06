@@ -139,14 +139,14 @@ struct JellyfinPlayerView: View {
                         VStack {
                             Spacer()
                             Text(subtitleText)
-                                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                .font(.system(size: settings.subtitleSize.fontSize, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
-                                .background(Color.black.opacity(0.7))
+                                .background(Color.black.opacity(settings.subtitleBackgroundOpacity))
                                 .cornerRadius(8)
                                 .multilineTextAlignment(.center)
-                                .padding(.bottom, 20)
+                                .padding(.bottom, settings.subtitleBottomMargin)
                                 .padding(.horizontal, 32)
                                 .transition(.opacity)
                         }
