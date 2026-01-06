@@ -25,6 +25,7 @@ enum SortOrder: String {
 
 struct FullLibraryView: View {
     let library: JellyfinLibrary
+    let server: JellyfinServerConfig
     @ObservedObject private var jellyfinService = JellyfinService.shared
     
     @State private var items: [JellyfinItem] = []
@@ -52,9 +53,9 @@ struct FullLibraryView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        NavigationLink(destination: MediaDetailsView(item: item)) {
+                        NavigationLink(destination: MediaDetailsView(item: item, server: server)) {
                             VStack {
-                                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
+                                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag, server: server)) { image in
                                     image
                                         .resizable()
                                         .aspectRatio(contentMode: .fill)
@@ -134,6 +135,9 @@ struct FullLibraryView: View {
             Button("Cancel", role: .cancel) {}
         }
         .onAppear {
+            // Ensure this server is selected for all downstream views (MediaDetailsView, etc.)
+            jellyfinService.selectServer(server)
+            
             if items.isEmpty {
                 loadInitialItems()
             }
@@ -149,6 +153,7 @@ struct FullLibraryView: View {
         
         jellyfinService.fetchLibraryItemsPaginated(
             libraryId: library.Id,
+            for: server,
             startIndex: 0,
             limit: itemsPerPage,
             sortBy: selectedSort.rawValue,
@@ -189,6 +194,7 @@ struct FullLibraryView: View {
         
         jellyfinService.fetchLibraryItemsPaginated(
             libraryId: library.Id,
+            for: server,
             startIndex: startIndex,
             limit: itemsPerPage,
             sortBy: selectedSort.rawValue,

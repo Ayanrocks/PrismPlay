@@ -30,7 +30,7 @@ struct ServerLibrariesView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 20) {
                         ForEach(libraries) { library in
-                            NavigationLink(destination: FullLibraryView(library: library)) {
+                            NavigationLink(destination: FullLibraryView(library: library, server: server)) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 15)

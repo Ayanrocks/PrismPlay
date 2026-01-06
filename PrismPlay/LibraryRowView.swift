@@ -16,7 +16,7 @@ struct LibraryRowView: View {
                 
                 Spacer()
                 
-                NavigationLink(destination: FullLibraryView(library: library)) {
+                NavigationLink(destination: FullLibraryView(library: library, server: serverConfig)) {
                     HStack(spacing: 4) {
                         Text("See More")
                             .font(.caption)
@@ -36,7 +36,7 @@ struct LibraryRowView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 15) {
                     ForEach(items) { item in
-                        NavigationLink(destination: MediaDetailsView(item: item)) {
+                        NavigationLink(destination: MediaDetailsView(item: item, server: serverConfig)) {
                             VStack(alignment: .leading, spacing: 8) {
                                 AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag, server: serverConfig)) { image in
                                     image

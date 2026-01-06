@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MediaDetailsView: View {
     let item: JellyfinItem
+    var server: JellyfinServerConfig? = nil  // Optional for backward compatibility
     @ObservedObject var jellyfinService = JellyfinService.shared
     @State private var detailedItem: JellyfinItem?
     @State private var seasons: [JellyfinItem] = []
@@ -472,26 +473,45 @@ struct MediaDetailsView: View {
     }
     
     private func loadDetails() {
-        jellyfinService.getItemDetails(itemId: item.Id) { fetchedItem in
-            Task { @MainActor in
-                if let fetchedItem = fetchedItem {
-                    self.detailedItem = fetchedItem
-                    
-                    if fetchedItem.ItemType == "Series" {
-                        loadSeasons(seriesId: fetchedItem.Id)
-                    }
-                } else {
-                    // Fallback or error handling
-                }
-                self.isLoadingDetails = false
+        print("MediaDetailsView - Loading details for item: \(item.Id), ItemType: \(item.ItemType ?? "nil")")
+        
+        // Use server-specific method if server is available
+        if let server = server {
+            print("MediaDetailsView - Using specified server: \(server.name)")
+            jellyfinService.getItemDetails(itemId: item.Id, for: server) { fetchedItem in
+                handleFetchedItem(fetchedItem)
+            }
+        } else {
+            jellyfinService.getItemDetails(itemId: item.Id) { fetchedItem in
+                handleFetchedItem(fetchedItem)
             }
         }
     }
     
+    private func handleFetchedItem(_ fetchedItem: JellyfinItem?) {
+        Task { @MainActor in
+            if let fetchedItem = fetchedItem {
+                print("MediaDetailsView - Fetched item type: \(fetchedItem.ItemType ?? "nil")")
+                self.detailedItem = fetchedItem
+                
+                if fetchedItem.ItemType == "Series" {
+                    print("MediaDetailsView - Loading seasons for series: \(fetchedItem.Id)")
+                    loadSeasons(seriesId: fetchedItem.Id)
+                }
+            } else {
+                print("MediaDetailsView - Failed to fetch item details")
+            }
+            self.isLoadingDetails = false
+        }
+    }
+    
     private func loadSeasons(seriesId: String) {
-        jellyfinService.fetchSeasons(seriesId: seriesId) { fetchedSeasons in
+        print("MediaDetailsView - Fetching seasons for seriesId: \(seriesId)")
+        
+        let completion: ([JellyfinItem]?) -> Void = { fetchedSeasons in
             Task { @MainActor in
                 self.seasons = fetchedSeasons ?? []
+                print("MediaDetailsView - Loaded \(self.seasons.count) seasons")
                 // Default to first season
                 if let firstSeason = self.seasons.first {
                     self.selectedSeasonId = firstSeason.Id
@@ -499,13 +519,28 @@ struct MediaDetailsView: View {
                 }
             }
         }
+        
+        if let server = server {
+            jellyfinService.fetchSeasons(seriesId: seriesId, for: server, completion: completion)
+        } else {
+            jellyfinService.fetchSeasons(seriesId: seriesId, completion: completion)
+        }
     }
     
     private func loadEpisodes(seriesId: String, seasonId: String) {
-        jellyfinService.fetchEpisodes(seriesId: seriesId, seasonId: seasonId) { fetchedEpisodes in
+        print("MediaDetailsView - Fetching episodes for seasonId: \(seasonId)")
+        
+        let completion: ([JellyfinItem]?) -> Void = { fetchedEpisodes in
             Task { @MainActor in
                 self.episodes = fetchedEpisodes ?? []
+                print("MediaDetailsView - Loaded \(self.episodes.count) episodes")
             }
+        }
+        
+        if let server = server {
+            jellyfinService.fetchEpisodes(seriesId: seriesId, seasonId: seasonId, for: server, completion: completion)
+        } else {
+            jellyfinService.fetchEpisodes(seriesId: seriesId, seasonId: seasonId, completion: completion)
         }
     }
 }

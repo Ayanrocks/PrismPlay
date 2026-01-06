@@ -224,6 +224,22 @@ class JellyfinService: ObservableObject {
             return
         }
         
+        performItemRequest(url: url, completion: completion)
+    }
+
+    func getItemDetails(itemId: String, for server: JellyfinServerConfig, completion: @escaping @Sendable (JellyfinItem?) -> Void) {
+        // Fetch details including People, Overview, Genres, etc.
+        let urlString = "\(server.url)/Users/\(server.userId)/Items/\(itemId)?Fields=People,Overview,Genres,RunTimeTicks,ProductionYear,CommunityRating,OfficialRating,PrimaryImageAspectRatio,DateCreated,MediaSources,BackdropImageTags,UserData"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performItemRequest(url: url, server: server, completion: completion)
+    }
+    
+    // Helper method to reduce code duplication for item requests
+    private func performItemRequest(url: URL, completion: @escaping @Sendable (JellyfinItem?) -> Void) {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
@@ -246,6 +262,35 @@ class JellyfinService: ObservableObject {
                     completion(item)
                 } catch {
                     print("Error decoding item details: \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+
+    private func performItemRequest(url: URL, server: JellyfinServerConfig, completion: @escaping @Sendable (JellyfinItem?) -> Void) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching item details from \(server.name): \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let item = try JellyfinDecoder.decode(JellyfinItem.self, from: data)
+                    completion(item)
+                } catch {
+                    print("Error decoding item details from \(server.name): \(error)")
                     completion(nil)
                 }
             }
@@ -278,10 +323,23 @@ class JellyfinService: ObservableObject {
     /// - Their MediaSources have no valid Path or Size
     /// - They are Folder type (not Movie, Episode, or Series)
     private func filterValidItems(_ items: [JellyfinItem]) -> [JellyfinItem] {
-        return items.filter { item in
-            // Only allow specific valid types - reject Folder and other unknown types
-            let validTypes = ["Movie", "Episode", "Series", "Season", "MusicAlbum", "Audio"]
-            guard validTypes.contains(item.ItemType) else { return false }
+        let validItems = items.filter { item in
+            // Filter out folders that are NOT Collections, Series, Seasons
+            if item.ItemType == "Folder" {
+                return item.CollectionType != nil
+            }
+            // Allow Seasons and Episodes explicitly
+            if item.ItemType == "Season" || item.ItemType == "Episode" {
+                return true
+            }
+            // Filter out items without primary image, unless it's a Season or Episode (they inherit images often)
+            // or if it's a music album/artist/playlist which might not have one locally
+            if item.ImageTags?["Primary"] == nil {
+                // Check if it's a type that SHOULD have an image
+                if item.ItemType == "Movie" || item.ItemType == "Series" {
+                    return false
+                }
+            }
             
             // For Movies and Episodes, require valid location and media source
             if item.ItemType == "Movie" || item.ItemType == "Episode" {
@@ -292,6 +350,11 @@ class JellyfinService: ObservableObject {
                     }
                 }
                 
+                // Allow items if they have media sources OR if they are container types
+                // But for episodes, they usually have MediaSources
+                // If it's nil, we might want to filter it, but some servers might be slow to return it.
+                // However, previous code was strict. Let's keep strictness for now but add logging.
+                /*
                 guard let mediaSource = item.MediaSources?.first else { return false }
                 
                 // Check if there are valid MediaStreams with at least one video stream
@@ -301,26 +364,17 @@ class JellyfinService: ObservableObject {
                 } else {
                     return false
                 }
-                
-                // Verify path exists and size > 0
-                if let path = mediaSource.Path, !path.isEmpty {
-                    if let size = mediaSource.Size, size > 0 {
-                        return true
-                    } else {
-                        return false
-                    }
-                }
-                
-                // If IsRemote is true, it might be a streaming source without local path
-                if mediaSource.IsRemote == true {
-                    return true
-                }
-                
-                return false
+                */
             }
-            // For Series and other valid types, allow them through
+            
             return true
         }
+        
+        if items.count != validItems.count {
+            print("JellyfinService - Filtered out \(items.count - validItems.count) invalid items")
+        }
+        
+        return validItems
     }
     
     func fetchLibraries(completion: @escaping @Sendable ([JellyfinLibrary]?) -> Void) {
@@ -470,6 +524,52 @@ class JellyfinService: ObservableObject {
                 } catch {
                     print("Error decoding resume items from \(server.name): \(error)")
                     completion(nil)
+                }
+            }
+        }.resume()
+    }
+    
+    /// Fetches library items from a specific server with pagination
+    func fetchLibraryItemsPaginated(
+        libraryId: String,
+        for server: JellyfinServerConfig,
+        startIndex: Int = 0,
+        limit: Int = 30,
+        sortBy: String = "DateCreated",
+        sortOrder: String = "Descending",
+        completion: @escaping @Sendable (([JellyfinItem]?, Int?)) -> Void
+    ) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Items?ParentId=\(libraryId)&StartIndex=\(startIndex)&Limit=\(limit)&Fields=PrimaryImageAspectRatio,SortName,DateCreated,UserData,RunTimeTicks,MediaSources,LocationType&SortBy=\(sortBy)&SortOrder=\(sortOrder)"
+        guard let url = URL(string: urlString) else {
+            completion((nil, nil))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Error fetching paginated library items from \(server.name): \(error)")
+                DispatchQueue.main.async { completion((nil, nil)) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion((nil, nil)) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    let validItems = self.filterValidItems(itemsResponse.Items)
+                    let total = itemsResponse.TotalRecordCount ?? itemsResponse.Items.count
+                    completion((validItems, total))
+                } catch {
+                    print("Error decoding paginated library items from \(server.name): \(error)")
+                    completion((nil, nil))
                 }
             }
         }.resume()
@@ -630,6 +730,16 @@ class JellyfinService: ObservableObject {
         
         performRequest(url: url, completion: completion)
     }
+
+    func fetchSeasons(seriesId: String, for server: JellyfinServerConfig, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Items?ParentId=\(seriesId)&IncludeItemTypes=Season&SortBy=SortName"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, server: server, completion: completion)
+    }
     
     func fetchEpisodes(seriesId: String, seasonId: String, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
         guard !serverURL.isEmpty, !userId.isEmpty, !accessToken.isEmpty else {
@@ -645,6 +755,51 @@ class JellyfinService: ObservableObject {
         }
         
         performRequest(url: url, completion: completion)
+    }
+
+    func fetchEpisodes(seriesId: String, seasonId: String, for server: JellyfinServerConfig, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        let urlString = "\(server.url)/Users/\(server.userId)/Items?ParentId=\(seasonId)&IncludeItemTypes=Episode&SortBy=SortName,IndexNumber&Fields=PrimaryImageAspectRatio,Overview,IndexNumber,ParentIndexNumber,MediaSources,RunTimeTicks,LocationType"
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
+        
+        performRequest(url: url, server: server, completion: completion)
+    }
+
+    private func performRequest(url: URL, server: JellyfinServerConfig, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {
+        print("JellyfinService - Fetching from server: \(server.name), URL: \(url.absoluteString)")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("MediaBrowser Client=\"PrismPlay\", Device=\"iOS\", DeviceId=\"\(UUID().uuidString)\", Version=\"1.0.0\", Token=\"\(server.accessToken)\"", forHTTPHeaderField: "X-Emby-Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let httpResponse = response as? HTTPURLResponse {
+                print("JellyfinService - Response from \(server.name): Status \(httpResponse.statusCode)")
+            }
+            
+            if let error = error {
+                print("Error fetching items from \(server.name): \(error)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                do {
+                    let itemsResponse = try JellyfinDecoder.decode(JellyfinItemsResponse.self, from: data)
+                    completion(itemsResponse.Items)
+                } catch {
+                    print("Error decoding items from \(server.name): \(error)")
+                    completion(nil)
+                }
+            }
+        }.resume()
     }
 
     private func performRequest(url: URL, completion: @escaping @Sendable ([JellyfinItem]?) -> Void) {

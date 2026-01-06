@@ -154,6 +154,7 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
     let SeriesName: String?
     let SeriesId: String?
     let LocationType: String?  // "FileSystem", "Remote", "Virtual", "Offline"
+    let CollectionType: String?
     
     var id: String { Id }
     
@@ -177,6 +178,7 @@ struct JellyfinItem: Codable, Identifiable, Sendable {
         case SeriesName
         case SeriesId
         case LocationType
+        case CollectionType
     }
     
     // Helper to get primary image tag
