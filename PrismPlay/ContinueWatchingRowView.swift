@@ -2,9 +2,9 @@ import SwiftUI
 
 /// A horizontal scrolling row for "Continue Watching" items
 struct ContinueWatchingRowView: View {
-    let items: [JellyfinItem]
+    let items: [ResumeItemWithServer]
     @ObservedObject var jellyfinService = JellyfinService.shared
-    @Binding var selectedItem: JellyfinItem?
+    @Binding var selectedItem: ResumeItemWithServer?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -20,11 +20,11 @@ struct ContinueWatchingRowView: View {
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 15) {
-                    ForEach(items) { item in
+                    ForEach(items) { resumeItem in
                         Button(action: {
-                            selectedItem = item
+                            selectedItem = resumeItem
                         }) {
-                            ContinueWatchingCard(item: item, jellyfinService: jellyfinService)
+                            ContinueWatchingCard(item: resumeItem.item, server: resumeItem.server, jellyfinService: jellyfinService)
                         }
                     }
                 }
@@ -38,13 +38,14 @@ struct ContinueWatchingRowView: View {
 /// Individual card for a continue watching item
 struct ContinueWatchingCard: View {
     let item: JellyfinItem
+    let server: JellyfinServerConfig
     let jellyfinService: JellyfinService
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 // Thumbnail with wider aspect ratio for continue watching
-                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag)) { image in
+                AsyncImage(url: jellyfinService.imageURL(for: item.Id, imageTag: item.primaryImageTag, server: server)) { image in
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -78,6 +79,12 @@ struct ContinueWatchingCard: View {
                     .font(.caption)
                     .fontWeight(.medium)
                     .foregroundColor(.white)
+                    .lineLimit(1)
+                
+                // Show server name for multi-server context
+                Text(server.name)
+                    .font(.caption2)
+                    .foregroundColor(.purple.opacity(0.8))
                     .lineLimit(1)
                 
                 if let remaining = item.remainingTimeString {

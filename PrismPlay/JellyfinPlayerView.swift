@@ -27,10 +27,16 @@ struct VideoQuality: Identifiable, Equatable, Hashable {
 
 struct JellyfinPlayerView: View {
     let item: JellyfinItem
+    let server: JellyfinServerConfig?  // Optional server context for multi-server support
     @StateObject private var viewModel = JellyfinPlayerViewModel()
     @ObservedObject private var jellyfinService = JellyfinService.shared
     @ObservedObject private var settings = PlayerSettings.shared
     @Environment(\.dismiss) var dismiss
+    
+    init(item: JellyfinItem, server: JellyfinServerConfig? = nil) {
+        self.item = item
+        self.server = server
+    }
     
     // Gesture States
     @State private var dragStartBrightness: CGFloat = 0
@@ -793,7 +799,8 @@ struct JellyfinPlayerView: View {
             itemId: item.Id,
             resumePosition: resumePosition,
             jellyfinService: jellyfinService,
-            item: item
+            item: item,
+            server: server  // Pass server context for multi-server support
         )
         
         // Determine available qualities based on the item
@@ -933,6 +940,7 @@ class JellyfinPlayerViewModel: ObservableObject {
     private var currentItemId: String?
     private var currentMediaSourceId: String?
     private var currentItem: JellyfinItem? // Keep reference for retries
+    private var currentServer: JellyfinServerConfig? // Server context for multi-server support
     
     // HLS Cache integration
     private let hlsCacheController = HLSCacheController.shared
@@ -963,10 +971,11 @@ class JellyfinPlayerViewModel: ObservableObject {
         }
     }
     
-    func setupPlayer(with url: URL? = nil, itemId: String, resumePosition: Double, jellyfinService: JellyfinService, item: JellyfinItem) {
+    func setupPlayer(with url: URL? = nil, itemId: String, resumePosition: Double, jellyfinService: JellyfinService, item: JellyfinItem, server: JellyfinServerConfig? = nil) {
         self.currentItemId = itemId
         self.currentItem = item
         self.currentMediaSourceId = item.MediaSources?.first?.Id
+        self.currentServer = server  // Store server context
         
         // Start with direct streaming for best quality (native HEVC/H.264)
         // Fallback cascade: direct → high (HLS HEVC) → compatible (H.264 transcode)
@@ -979,12 +988,20 @@ class JellyfinPlayerViewModel: ObservableObject {
         // Get URL based on current profile
         let streamURL: URL?
         
-        if currentProfile == .direct {
-            // Direct stream for native HEVC/H.264 - no transcoding
-            streamURL = jellyfinService.getDirectStreamURL(itemId: itemId)
+        if let server = currentServer {
+            // Use server-specific methods for multi-server support
+            if currentProfile == .direct {
+                streamURL = jellyfinService.getDirectStreamURL(itemId: itemId, for: server)
+            } else {
+                streamURL = jellyfinService.getStreamURL(itemId: itemId, for: server, profile: currentProfile, maxBitrate: selectedQuality.bitrate)
+            }
         } else {
-            // HLS transcoding with profile settings
-            streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: selectedQuality.bitrate)
+            // Fall back to default server methods
+            if currentProfile == .direct {
+                streamURL = jellyfinService.getDirectStreamURL(itemId: itemId)
+            } else {
+                streamURL = jellyfinService.getStreamURL(itemId: itemId, profile: currentProfile, maxBitrate: selectedQuality.bitrate)
+            }
         }
         
         guard let url = streamURL else {

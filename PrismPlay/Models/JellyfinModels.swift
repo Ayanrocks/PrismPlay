@@ -244,3 +244,12 @@ struct JellyfinLibrary: Codable, Identifiable, Sendable {
 struct JellyfinLibrariesResponse: Codable, Sendable {
     let Items: [JellyfinLibrary]
 }
+
+/// Wrapper that pairs a JellyfinItem with its source server configuration.
+/// Used for Continue Watching and other features where items from multiple servers are combined.
+struct ResumeItemWithServer: Identifiable {
+    let item: JellyfinItem
+    let server: JellyfinServerConfig
+    
+    var id: String { "\(server.id.uuidString)-\(item.Id)" }
+}

@@ -878,6 +878,44 @@ class JellyfinService: ObservableObject {
         return URL(string: urlString)
     }
     
+    // MARK: - Server-Specific Streaming URLs
+    
+    /// Constructs a streaming URL for a specific server (multi-server support)
+    func getStreamURL(itemId: String, for server: JellyfinServerConfig, profile: PlaybackProfile = .high, maxBitrate: Int? = nil) -> URL? {
+        let bitrate = maxBitrate ?? 120_000_000
+        
+        var components = URLComponents(string: "\(server.url)/Videos/\(itemId)/master.m3u8")
+        
+        components?.queryItems = [
+            URLQueryItem(name: "UserId", value: server.userId),
+            URLQueryItem(name: "api_key", value: server.accessToken),
+            URLQueryItem(name: "MediaSourceId", value: itemId),
+            URLQueryItem(name: "VideoCodec", value: profile.videoCodec),
+            URLQueryItem(name: "AudioCodec", value: profile.audioCodec),
+            URLQueryItem(name: "MaxAudioChannels", value: "6"),
+            URLQueryItem(name: "SegmentContainer", value: profile.segmentContainer),
+            URLQueryItem(name: "MinSegments", value: "1"),
+            URLQueryItem(name: "BreakOnNonKeyFrames", value: "true"),
+            URLQueryItem(name: "TranscodingProtocol", value: profile.transcodingProtocol),
+            URLQueryItem(name: "VideoBitrate", value: String(bitrate))
+        ]
+        
+        return components?.url
+    }
+    
+    /// Constructs a direct stream URL for a specific server (multi-server support)
+    func getDirectStreamURL(itemId: String, for server: JellyfinServerConfig) -> URL? {
+        let urlString = "\(server.url)/Videos/\(itemId)/stream.mp4?static=true&api_key=\(server.accessToken)"
+        return URL(string: urlString)
+    }
+    
+    /// Constructs a subtitle URL for a specific server
+    func getSubtitleURL(itemId: String, mediaSourceId: String? = nil, subtitleIndex: Int, for server: JellyfinServerConfig) -> URL? {
+        let sourceId = mediaSourceId ?? itemId
+        let urlString = "\(server.url)/Videos/\(itemId)/\(sourceId)/Subtitles/\(subtitleIndex)/Stream.vtt?api_key=\(server.accessToken)"
+        return URL(string: urlString)
+    }
+
     // MARK: - Subtitles
     
     /// Get available subtitle streams from a JellyfinItem's MediaSources

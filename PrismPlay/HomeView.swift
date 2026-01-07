@@ -12,9 +12,9 @@ struct HomeView: View {
     @ObservedObject private var jellyfinService = JellyfinService.shared
     @State private var showJellyfinLogin = false
     @State private var librariesWithItems: [LibraryWithItems] = []
-    @State private var resumeItems: [JellyfinItem] = []
+    @State private var resumeItems: [ResumeItemWithServer] = []
     @State private var isLoading = false
-    @State private var playingItem: JellyfinItem?
+    @State private var playingResumeItem: ResumeItemWithServer?
     @State private var hasLoadedOnce = false
     
     var body: some View {
@@ -104,7 +104,7 @@ struct HomeView: View {
                         } else {
                             // Continue Watching Section (if any)
                             if !resumeItems.isEmpty {
-                                ContinueWatchingRowView(items: resumeItems, jellyfinService: jellyfinService, selectedItem: $playingItem)
+                                ContinueWatchingRowView(items: resumeItems, jellyfinService: jellyfinService, selectedItem: $playingResumeItem)
                             }
                             
                             // Library Rows
@@ -124,8 +124,8 @@ struct HomeView: View {
         .sheet(isPresented: $showJellyfinLogin) {
             JellyfinLoginView(isPresented: $showJellyfinLogin)
         }
-        .fullScreenCover(item: $playingItem) { item in
-            JellyfinPlayerView(item: item)
+        .fullScreenCover(item: $playingResumeItem) { resumeItem in
+            JellyfinPlayerView(item: resumeItem.item, server: resumeItem.server)
         }
         .onAppear {
             // Only load on first appearance to prevent re-fetching on navigation return
@@ -145,13 +145,15 @@ struct HomeView: View {
         
         Task {
             var allLibrariesWithItems: [LibraryWithItems] = []
-            var allResumeItems: [JellyfinItem] = []
+            var allResumeItems: [ResumeItemWithServer] = []
             
             // Fetch from ALL servers
             for server in jellyfinService.savedServers {
                 // Fetch resume items for this server
-                if let resumeItems = await fetchResumeItemsAsync(for: server) {
-                    allResumeItems.append(contentsOf: resumeItems)
+                if let items = await fetchResumeItemsAsync(for: server) {
+                    // Wrap each item with its server context
+                    let wrappedItems = items.map { ResumeItemWithServer(item: $0, server: server) }
+                    allResumeItems.append(contentsOf: wrappedItems)
                 }
                 
                 // Fetch libraries for this server
